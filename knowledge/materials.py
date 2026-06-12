@@ -1,6 +1,7 @@
-"""Project zip -> course materials: a PPTX lecture per unit, an LMS intro per
-unit, assignment instructions per unit, and one deterministic machine-readable
-rubric for the whole course. Pure extraction + templating — no LLM.
+"""Project zip -> course materials: a PPTX lecture per unit, a Word (.docx)
+LMS intro per unit, Word assignment instructions per unit, and one
+deterministic machine-readable rubric CSV for the whole course. Pure
+extraction + templating — no LLM.
 
 Built around the structure the Copilot project prompt produces:
 
@@ -10,12 +11,14 @@ Built around the structure the Copilot project prompt produces:
 """
 
 import ast
+import csv
 import io
-import json
 import re
 import zipfile
 from dataclasses import dataclass, field
 
+from docx import Document
+from docx.shared import Pt as DocxPt
 from pptx import Presentation
 from pptx.util import Inches, Pt
 
@@ -401,66 +404,137 @@ def build_lecture(unit):
     return output.getvalue()
 
 
+def _strip_md(text):
+    """Inline markdown markers removed for Word body text."""
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+    return text.replace("`", "").strip()
+
+
+def _add_md_block(document, text):
+    """Markdown-ish section text -> Word paragraphs (bullets become List
+    Bullet style, everything else body text)."""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith(("-", "*")):
+            document.add_paragraph(_strip_md(stripped.lstrip("-* ")), style="List Bullet")
+        else:
+            document.add_paragraph(_strip_md(stripped))
+
+
+def _docx_bytes(document):
+    output = io.BytesIO()
+    document.save(output)
+    return output.getvalue()
+
+
+def _new_document():
+    document = Document()
+    document.styles["Normal"].font.size = DocxPt(11)
+    return document
+
+
 def build_lms_intro(unit, course_title):
-    objectives = "\n".join(f"- Understand **{c['name'].lower()}**" for c in unit.concepts)
+    """Weekly LMS introduction as a professionally styled .docx."""
+    document = _new_document()
+    document.add_heading(f"Week {unit.week}: {unit.topic}", level=1)
+    document.add_paragraph(
+        f"Welcome to week {unit.week} of {course_title}! This week we tackle "
+        f"{unit.topic}."
+    )
+
+    document.add_heading("What you'll learn", level=2)
+    if unit.concepts:
+        for concept in unit.concepts:
+            document.add_paragraph(
+                f"Understand {concept['name'].lower()}", style="List Bullet"
+            )
+    else:
+        document.add_paragraph(f"The fundamentals of {unit.topic}", style="List Bullet")
+
+    document.add_heading("This week's goal", level=2)
     target = unit.sections.get("Learning target", "").strip()
-    grading = "\n".join(f"- {humanize_test(t)}" for t in unit.tests)
-    return f"""# Week {unit.week}: {unit.topic}
+    document.add_paragraph(
+        _strip_md(target)
+        if target
+        else f"Complete the {unit.slug} unit and make all of its automated tests pass."
+    )
 
-Welcome to week {unit.week} of {course_title}! This week we tackle **{unit.topic}**.
+    document.add_heading("What to do", level=2)
+    for step in (
+        "Read this week's lecture slides.",
+        f"Open {unit.path}/ in the project and read the instructions.",
+        "Complete the starter code where marked, testing as you go.",
+        "Commit your work and confirm the automated tests pass.",
+    ):
+        document.add_paragraph(step, style="List Number")
 
-## What you'll learn
-{objectives or f"- The fundamentals of {unit.topic}"}
+    document.add_heading("How you'll be graded", level=2)
+    document.add_paragraph("Your submission is graded automatically and deterministically:")
+    for test in unit.tests or []:
+        document.add_paragraph(humanize_test(test), style="List Bullet")
+    if not unit.tests:
+        document.add_paragraph("The unit's automated checks pass", style="List Bullet")
+    document.add_paragraph(
+        "No placeholder/starter values remain in your code", style="List Bullet"
+    )
+    document.add_paragraph("Your code runs without syntax errors", style="List Bullet")
 
-## This week's goal
-{target or f"Complete the {unit.slug} unit and make all of its automated tests pass."}
-
-## What to do
-1. Read this week's lecture slides.
-2. Open `{unit.path}/` in the project and read the instructions.
-3. Complete the starter code where marked, testing as you go.
-4. Commit your work and confirm the automated tests pass.
-
-## How you'll be graded
-Your submission is graded automatically and deterministically:
-{grading or "- The unit's automated checks pass"}
-- No placeholder/starter values remain in your code
-- Your code runs without syntax errors
-
-Post in the discussion forum if you get stuck — struggling is part of learning,
-but staying stuck isn't.
-"""
+    document.add_paragraph(
+        "Post in the discussion forum if you get stuck — struggling is part of "
+        "learning, but staying stuck isn't."
+    )
+    return _docx_bytes(document)
 
 
 def build_assignment_doc(unit):
-    parts = [f"# Week {unit.week} Assignment — {unit.topic}", ""]
+    """Weekly assignment instructions as a professionally styled .docx."""
+    document = _new_document()
+    document.add_heading(f"Week {unit.week} Assignment — {unit.topic}", level=1)
+
     if unit.sections.get("Learning target"):
-        parts += ["## Goal", unit.sections["Learning target"], ""]
+        document.add_heading("Goal", level=2)
+        _add_md_block(document, unit.sections["Learning target"])
+
     if unit.tasks:
-        parts += ["## Your job"] + [f"{i}. {t}" for i, t in enumerate(unit.tasks, 1)] + [""]
+        document.add_heading("Your job", level=2)
+        for task in unit.tasks:
+            document.add_paragraph(_strip_md(task), style="List Number")
     elif unit.steps:
-        parts += ["## Steps"] + [f"{i}. {s}" for i, s in enumerate(unit.steps, 1)] + [""]
+        document.add_heading("Steps", level=2)
+        for step in unit.steps:
+            document.add_paragraph(_strip_md(step), style="List Number")
+
     if unit.rules:
-        parts += ["## Rules your solution must follow"] + [f"- {r}" for r in unit.rules] + [""]
+        document.add_heading("Rules your solution must follow", level=2)
+        for rule in unit.rules:
+            document.add_paragraph(_strip_md(rule), style="List Bullet")
+
     workflow = unit.sections.get("Starter workflow (GUI-only)") or unit.sections.get(
         "Starter workflow"
     )
     if workflow:
-        parts += ["## Workflow", workflow, ""]
+        document.add_heading("Workflow", level=2)
+        _add_md_block(document, workflow)
+
     for heading, text in unit.sections.items():
         if heading.lower().startswith(("learning target", "starter workflow")):
             continue
-        parts += [f"## {heading}", text, ""]
+        document.add_heading(_strip_md(heading), level=2)
+        _add_md_block(document, text)
+
     if unit.test_file:
-        parts += [
-            "## Check your work",
-            f"Run the automated tests in `{unit.test_file}`. Your submission is "
+        document.add_heading("Check your work", level=2)
+        document.add_paragraph(
+            f"Run the automated tests in {unit.test_file}. Your submission is "
             "graded on these exact tests — if they pass for you, they pass for "
-            "the grader.",
-            "",
-        ]
-        parts += [f"- {humanize_test(t)}" for t in unit.tests]
-    return "\n".join(parts).strip() + "\n"
+            "the grader."
+        )
+        for test in unit.tests:
+            document.add_paragraph(humanize_test(test), style="List Bullet")
+
+    return _docx_bytes(document)
 
 
 def build_rubric(units):
@@ -548,6 +622,108 @@ def build_rubric(units):
     }
 
 
+CSV_COLUMNS = [
+    "unit_id",
+    "week",
+    "topic",
+    "unit_path",
+    "max_points",
+    "criterion_id",
+    "criterion_type",
+    "weight",
+    "scoring",
+    "target",
+    "details",
+]
+_DETAIL_SEPARATOR = " | "
+
+
+def rubric_to_csv(rubric):
+    """The rubric as one flat deterministic CSV: a GRADER_CONTRACT row per
+    criterion type (how to evaluate it), then one row per unit criterion.
+    Multi-value cells (test names, forbidden lines, required files) are
+    joined with ' | '."""
+    output = io.StringIO()
+    writer = csv.writer(output, lineterminator="\n")
+    writer.writerow(CSV_COLUMNS)
+    for criterion_type in sorted(rubric["grader_contract"]):
+        writer.writerow(
+            [
+                "GRADER_CONTRACT",
+                "",
+                "",
+                "",
+                "",
+                "",
+                criterion_type,
+                "",
+                "",
+                "",
+                rubric["grader_contract"][criterion_type],
+            ]
+        )
+    for unit in rubric["units"]:
+        for criterion in unit["criteria"]:
+            if criterion["type"] == "pytest":
+                target = criterion["target"]
+                details = _DETAIL_SEPARATOR.join(criterion["tests"])
+            elif criterion["type"] == "forbidden_lines_absent":
+                target = criterion["file"]
+                details = _DETAIL_SEPARATOR.join(criterion["forbidden_lines"])
+            elif criterion["type"] == "python_compiles":
+                target = criterion["file"]
+                details = ""
+            else:  # files_present
+                target = ""
+                details = _DETAIL_SEPARATOR.join(criterion["required"])
+            writer.writerow(
+                [
+                    unit["id"],
+                    unit["week"],
+                    unit["topic"],
+                    unit["path"],
+                    unit["max_points"],
+                    criterion["id"],
+                    criterion["type"],
+                    criterion["weight"],
+                    criterion["scoring"],
+                    target,
+                    details,
+                ]
+            )
+    return output.getvalue()
+
+
+def build_manifest(units):
+    """Bundle manifest as a .docx with a week/unit/topic table."""
+    document = _new_document()
+    document.add_heading("Course materials", level=1)
+    document.add_paragraph(
+        f"Generated deterministically from the uploaded project ({len(units)} units)."
+    )
+
+    table = document.add_table(rows=1, cols=3)
+    table.style = "Light Grid Accent 1"
+    header = table.rows[0].cells
+    header[0].text, header[1].text, header[2].text = "Week", "Unit", "Topic"
+    for unit in units:
+        row = table.add_row().cells
+        row[0].text = str(unit.week)
+        row[1].text = unit.slug
+        row[2].text = unit.topic
+
+    document.add_heading("Contents", level=2)
+    for line in (
+        "lectures/ — one PPTX lecture per week",
+        "lms/ — weekly LMS introduction posts (.docx)",
+        "assignments/ — weekly assignment instructions (.docx)",
+        "rubric.csv — deterministic rubric for a non-LLM grader "
+        "(GRADER_CONTRACT rows document each criterion type)",
+    ):
+        document.add_paragraph(line, style="List Bullet")
+    return _docx_bytes(document)
+
+
 def _slugify(text):
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:40] or "unit"
 
@@ -558,32 +734,13 @@ def build_materials(zip_bytes, course_title="this course"):
 
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as bundle:
-        manifest = [
-            "# Course materials",
-            "",
-            f"Generated deterministically from the uploaded project ({len(units)} units).",
-            "",
-            "| Week | Unit | Topic |",
-            "|---|---|---|",
-        ]
         for unit in units:
             stem = f"week-{unit.week:02d}-{_slugify(unit.topic)}"
             bundle.writestr(f"lectures/{stem}.pptx", build_lecture(unit))
-            bundle.writestr(f"lms/{stem}.md", build_lms_intro(unit, course_title))
-            bundle.writestr(f"assignments/{stem}.md", build_assignment_doc(unit))
-            manifest.append(f"| {unit.week} | {unit.slug} | {unit.topic} |")
-        bundle.writestr(
-            "rubric.json", json.dumps(build_rubric(units), indent=2, sort_keys=False)
-        )
-        manifest += [
-            "",
-            "- `lectures/` — one PPTX lecture per week",
-            "- `lms/` — weekly LMS introduction posts (markdown)",
-            "- `assignments/` — weekly assignment instructions (markdown)",
-            "- `rubric.json` — deterministic rubric for a non-LLM grader "
-            "(see its `grader_contract`)",
-        ]
-        bundle.writestr("MANIFEST.md", "\n".join(manifest) + "\n")
+            bundle.writestr(f"lms/{stem}.docx", build_lms_intro(unit, course_title))
+            bundle.writestr(f"assignments/{stem}.docx", build_assignment_doc(unit))
+        bundle.writestr("rubric.csv", rubric_to_csv(build_rubric(units)))
+        bundle.writestr("MANIFEST.docx", build_manifest(units))
 
     summary = {
         "units": len(units),

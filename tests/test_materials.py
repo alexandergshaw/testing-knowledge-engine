@@ -1,15 +1,19 @@
+import csv
 import io
 import json
 import zipfile
 
 import pytest
+from docx import Document
 from pptx import Presentation
 
 from knowledge.materials import (
+    CSV_COLUMNS,
     MaterialsError,
     build_materials,
     build_rubric,
     parse_project,
+    rubric_to_csv,
 )
 
 INSTRUCTIONS = """# assignment1: Variables, I/O, Branching
@@ -146,28 +150,68 @@ def test_rubric_is_deterministic_and_weights_sum_to_100():
     ]
 
 
+def _docx_text(blob):
+    document = Document(io.BytesIO(blob))
+    return [(p.style.name, p.text) for p in document.paragraphs if p.text]
+
+
 def test_build_materials_bundle_contents():
     payload, summary = build_materials(make_project_zip())
     assert summary["units"] == 2
     with zipfile.ZipFile(io.BytesIO(payload)) as bundle:
         names = bundle.namelist()
-        assert "rubric.json" in names
-        assert "MANIFEST.md" in names
+        assert "rubric.csv" in names
+        assert "MANIFEST.docx" in names
+        assert not any(n.endswith((".md", ".json")) for n in names)
         lectures = [n for n in names if n.startswith("lectures/") and n.endswith(".pptx")]
-        lms = [n for n in names if n.startswith("lms/")]
-        assignments = [n for n in names if n.startswith("assignments/")]
+        lms = [n for n in names if n.startswith("lms/") and n.endswith(".docx")]
+        assignments = [
+            n for n in names if n.startswith("assignments/") and n.endswith(".docx")
+        ]
         assert len(lectures) == len(lms) == len(assignments) == 2
 
         deck = Presentation(io.BytesIO(bundle.read(lectures[0])))
         assert len(deck.slides) >= 5  # title, goals, 2 concepts, task/grading
 
-        intro = bundle.read([n for n in lms if "week-01" in n][0]).decode()
-        assert "Variables, I/O, Branching" in intro
-        assert "graded automatically" in intro
+        intro = _docx_text(bundle.read([n for n in lms if "week-01" in n][0]))
+        assert ("Heading 1", "Week 1: Variables, I/O, Branching") in intro
+        assert ("Heading 2", "How you'll be graded") in intro
+        assert any(style == "List Bullet" for style, _ in intro)
 
-        doc = bundle.read([n for n in assignments if "week-01" in n][0]).decode()
-        assert "## Your job" in doc
-        assert "## Rules your solution must follow" in doc
+        doc = _docx_text(bundle.read([n for n in assignments if "week-01" in n][0]))
+        assert ("Heading 1", "Week 1 Assignment — Variables, I/O, Branching") in doc
+        assert ("Heading 2", "Your job") in doc
+        assert ("Heading 2", "Rules your solution must follow") in doc
+        assert any(style == "List Number" for style, _ in doc)
+
+        manifest = Document(io.BytesIO(bundle.read("MANIFEST.docx")))
+        assert len(manifest.tables) == 1
+        assert len(manifest.tables[0].rows) == 3  # header + 2 units
+
+
+def test_rubric_csv_shape():
+    units = parse_project(make_project_zip())
+    text = rubric_to_csv(build_rubric(units))
+    assert text == rubric_to_csv(build_rubric(units))  # deterministic
+    rows = list(csv.DictReader(io.StringIO(text)))
+    assert list(rows[0]) == CSV_COLUMNS
+
+    contract_rows = [r for r in rows if r["unit_id"] == "GRADER_CONTRACT"]
+    assert {r["criterion_type"] for r in contract_rows} >= {
+        "pytest",
+        "forbidden_lines_absent",
+        "python_compiles",
+        "files_present",
+    }
+
+    unit_rows = [r for r in rows if r["unit_id"] == "assignment1"]
+    assert sum(int(r["weight"]) for r in unit_rows) == 100
+    pytest_row = next(r for r in unit_rows if r["criterion_type"] == "pytest")
+    assert "test_get_dashboard_payload_exists" in pytest_row["details"]
+    placeholder_row = next(
+        r for r in unit_rows if r["criterion_type"] == "forbidden_lines_absent"
+    )
+    assert 'student_name = "Your Name"' in placeholder_row["details"]
 
 
 def test_invalid_zip_rejected():

@@ -173,7 +173,7 @@ materialsForm.addEventListener("submit", async (event) => {
     link.remove();
     URL.revokeObjectURL(url);
     showMaterialsStatus(
-      "Done — course-materials.zip downloaded (lectures, LMS intros, assignments, rubric.json).",
+      "Done — course-materials.zip downloaded (PPTX lectures, Word LMS intros and assignments, rubric.csv).",
       ""
     );
   } catch (error) {

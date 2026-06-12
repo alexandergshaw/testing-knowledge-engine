@@ -44,12 +44,15 @@ back into the app ("Generate course materials") and get — with zero AI:
 
 - `lectures/week-NN-*.pptx` — a slide deck per unit, built from the teaching
   comments in each unit's starter code
-- `lms/week-NN-*.md` — a weekly LMS introduction post per unit
-- `assignments/week-NN-*.md` — assignment instructions per week
-- `rubric.json` — a deterministic rubric for a **non-LLM grader API**: every
-  criterion is a mechanical check (pytest results, placeholder lines absent,
-  file compiles, files present) with weights summing to 100; the embedded
-  `grader_contract` documents how to evaluate each criterion type
+- `lms/week-NN-*.docx` — a weekly LMS introduction per unit, Word-formatted
+  with hierarchical heading styles
+- `assignments/week-NN-*.docx` — assignment instructions per week (Word,
+  same professional heading hierarchy)
+- `rubric.csv` — a deterministic rubric for a **non-LLM grader API**: one row
+  per criterion, every criterion a mechanical check (pytest results,
+  placeholder lines absent, file compiles, files present) with weights
+  summing to 100 per unit; leading `GRADER_CONTRACT` rows document how to
+  evaluate each criterion type; multi-value cells are `|`-separated
 
 The parser ([knowledge/materials.py](knowledge/materials.py)) expects the
 structure the Copilot prompt produces: unit folders containing
