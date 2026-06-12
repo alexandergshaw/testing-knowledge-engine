@@ -33,3 +33,19 @@ def test_person_question():
     q = analyze("Who was Carl Jung?")
     assert q.qtype == "person"
     assert q.topic == "carl jung"
+
+
+def test_curriculum_question_routing_signals():
+    q = analyze("what topics need to be covered in a python college course")
+    assert q.qtype == "list"
+    assert q.is_programming
+    assert q.is_education
+    # Vague filler ("need") must not reach the source APIs.
+    assert "need" not in q.search_terms.split()
+    assert "python" in q.search_terms
+    assert "course" in q.search_terms
+
+
+def test_short_definition_keeps_topic_as_search_terms():
+    q = analyze("What is cognitive dissonance?")
+    assert q.search_terms == "cognitive dissonance"

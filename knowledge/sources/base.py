@@ -41,9 +41,17 @@ class Source:
 
 def strip_html(html):
     """Plain text from API-returned HTML. Code blocks are dropped (prose is
-    what we synthesize), inline code keeps its text."""
-    html = re.sub(r"<pre[^>]*>.*?</pre>", " ", html, flags=re.S)
-    html = re.sub(r"<blockquote[^>]*>", " ", html)
+    what we synthesize), inline code keeps its text. Block-element boundaries
+    become sentence breaks so headings don't glue onto the next paragraph."""
+    html = re.sub(r"<pre[^>]*>.*?</pre>", ". ", html, flags=re.S)
     html = re.sub(r"<code>(.*?)</code>", r"\1", html, flags=re.S)
+    html = re.sub(r"</(p|h[1-6]|li|blockquote|tr|div)>|<br\s*/?>", ". ", html)
     html = re.sub(r"<[^>]+>", " ", html)
-    return re.sub(r"\s+", " ", unescape(html)).strip()
+    text = unescape(html)
+    # A colon that introduced a removed code block ends its sentence —
+    # otherwise "accumulate decorators:" glues onto the next paragraph.
+    text = re.sub(r":\s*(\.\s*)+", ". ", text)
+    # Drop the periods we injected right after existing punctuation.
+    text = re.sub(r"([.!?;,])(\s*\.)+", r"\1 ", text)
+    text = re.sub(r"(\s*\.){2,}", ". ", text)
+    return re.sub(r"\s+", " ", text).strip()

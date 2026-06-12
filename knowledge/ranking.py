@@ -15,6 +15,35 @@ MIN_SENTENCE_CHARS = 30
 MAX_SENTENCE_CHARS = 500
 LEAD_SENTENCE_BOOST = 1.25
 TITLE_MATCH_WEIGHT = 0.5
+ENUMERATION_BOOST = 1.3
+
+# For "what topics/concepts/..." questions, sentences that enumerate things
+# ARE the answer shape we want.
+_ENUMERATION = re.compile(
+    r"\b(covers|includes|including|teaches|comprises|consists of)\b", re.IGNORECASE
+)
+
+
+# Articles about creative works often share their exact title with the real
+# topic ("The Fall of the Roman Empire" is a 1964 film). Demote them unless
+# the question is actually about media.
+_MEDIA_WORK = re.compile(
+    r"\bis an? \d{4}\b.*\b(film|movie|novel|album|song|miniseries|video game|"
+    r"band|television series|TV series)\b",
+    re.IGNORECASE,
+)
+MEDIA_WORK_PENALTY = 0.4
+_MEDIA_QUERY_TERMS = frozenset(
+    "film films movie movies novel novels album albums song songs game games band series show".split()
+)
+
+
+def _media_penalty(query, passage):
+    if _MEDIA_WORK.search(passage.text[:250]) and not (
+        set(query.keywords) & _MEDIA_QUERY_TERMS
+    ):
+        return MEDIA_WORK_PENALTY
+    return 1.0
 
 
 def _title_boost(query, passage):
@@ -79,7 +108,9 @@ def rank(query, passages):
     for passage in passages:
         for position, text in enumerate(split_sentences(passage.text)):
             tokens = content_tokens(text)
-            if len(tokens) < 4:
+            # Fewer than 5 content tokens is a heading stub or transition
+            # ("Taking decorators to the next level."), not substance.
+            if len(tokens) < 5:
                 continue
             sentences.append(
                 ScoredSentence(text=text, tokens=tokens, passage=passage)
@@ -90,15 +121,21 @@ def rank(query, passages):
 
     bm25 = BM25([s.tokens for s in sentences])
     query_tokens = content_tokens(" ".join(query.keywords) or query.topic)
-    title_boosts = {id(p): _title_boost(query, p) for p in passages}
+    passage_weights = {
+        id(p): _title_boost(query, p) * _media_penalty(query, p) for p in passages
+    }
     for index, sentence in enumerate(sentences):
         score = (
             bm25.score(query_tokens, index)
             * sentence.passage.trust
-            * title_boosts[id(sentence.passage)]
+            * passage_weights[id(sentence.passage)]
         )
         if getattr(sentence, "lead", False):
             score *= LEAD_SENTENCE_BOOST
+        if query.qtype == "list" and (
+            _ENUMERATION.search(sentence.text) or sentence.text.count(",") >= 4
+        ):
+            score *= ENUMERATION_BOOST
         sentence.score = score
 
     return sorted(sentences, key=lambda s: s.score, reverse=True)

@@ -22,6 +22,27 @@ QUESTION_WORDS = frozenset(
     happen happens happened difference between""".split()
 )
 
+# Filler that adds nothing to a search query or to confidence scoring.
+VAGUE_WORDS = frozenset(
+    """need needs needed want wants wanted get gets make makes use used using
+    way ways thing things stuff best good great important really actually
+    several many lot lots""".split()
+)
+
+# Words about the *shape* of the desired answer, not its subject. They stay in
+# the ranking keywords (they boost sentences like "covers topics including:")
+# but are excluded from API search strings, where they derail keyword search.
+META_WORDS = frozenset(
+    """topic topics concept concepts subject subjects area areas skill skills
+    list lists cover covers covered covering include includes included""".split()
+)
+
+EDUCATION_TERMS = frozenset(
+    """course courses curriculum syllabus class classes college university
+    school teach teaching taught learn learning lesson lessons student
+    students textbook beginner beginners introductory bootcamp""".split()
+)
+
 _PREFIX_PATTERNS = [
     r"^(what|who)\s+(is|are|was|were)\s+(a|an|the)?\s*",
     r"^what\s+does\s+",
@@ -63,8 +84,10 @@ class AnalyzedQuery:
     raw: str
     topic: str                      # question with interrogative scaffolding stripped
     keywords: list = field(default_factory=list)
-    qtype: str = "generic"          # definition | howto | why | person | generic
+    qtype: str = "generic"          # definition | howto | why | person | list | generic
     is_programming: bool = False
+    is_education: bool = False
+    search_terms: str = ""          # what actually gets sent to source APIs
 
 
 def tokenize(text):
@@ -90,6 +113,8 @@ def content_tokens(text):
 
 def classify(question):
     q = question.lower().strip()
+    if re.search(r"^(what|which)\s+(topics|concepts|subjects|skills|areas)\b", q) or "list of" in q:
+        return "list"
     if re.search(r"^(what\s+(is|are|was|were)|define|definition\s+of|meaning\s+of)\b", q) or re.search(
         r"^what\s+does\b.*\bmean", q
     ):
@@ -131,10 +156,28 @@ def analyze(question):
     is_programming = bool(tokens & _PROGRAMMING_TERMS) or bool(
         _CODE_PATTERN.search(question)
     )
+    is_education = bool(tokens & EDUCATION_TERMS)
+
+    # Sources get a focused keyword query, not the raw question — long
+    # natural-language strings derail keyword-based search APIs. A cleanly
+    # stripped short topic ("cognitive dissonance") is even better.
+    informative = [k for k in keywords if k not in VAGUE_WORDS and k not in META_WORDS]
+    stripped = topic != question.strip().rstrip("?!. ").lower()
+    if stripped and len(topic.split()) <= 5:
+        search_terms = topic
+    else:
+        search_terms = " ".join(informative[:6]) or topic
+        # Domain anchoring: "python college course" finds Monty Python on
+        # Wikipedia; "python college course programming" finds Python.
+        if is_programming and is_education and "programming" not in search_terms:
+            search_terms += " programming"
+
     return AnalyzedQuery(
         raw=question.strip(),
         topic=topic,
         keywords=keywords,
         qtype=qtype,
         is_programming=is_programming,
+        is_education=is_education,
+        search_terms=search_terms,
     )

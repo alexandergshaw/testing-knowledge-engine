@@ -14,15 +14,24 @@ techniques:
    (definition / how-to / why / person / generic).
 2. **Domain routing** ([knowledge/pipeline.py](knowledge/pipeline.py)) —
    heuristics pick which sources to ask. Wikipedia and DuckDuckGo always run;
-   Stack Overflow joins for programming-shaped questions; Wiktionary for
-   short definition questions.
+   Stack Overflow joins for programming questions; Wikiversity and CS
+   Educators SE for curriculum/teaching questions; Wiktionary for short
+   definitions. Sources are searched with distilled keywords (filler and
+   "answer-shape" words stripped), with relaxed-retry variants if nothing
+   comes back.
 3. **Parallel fetch** — free, keyless public APIs queried concurrently:
    | Source | API | Domains |
    |---|---|---|
    | Wikipedia | MediaWiki search + extracts | history, psychology, science, general |
+   | Wikiversity | MediaWiki extracts | courses, curricula, teaching |
    | Wiktionary | MediaWiki extracts | word definitions |
    | Stack Overflow | api.stackexchange.com (keyless quota) | programming |
+   | CS Educators SE | api.stackexchange.com (keyless quota) | CS teaching |
    | DuckDuckGo | Instant Answer API | quick facts, abstracts |
+
+   Course/outline pages get their lesson lists harvested into a citable
+   "covers topics including: ..." sentence, so list-style questions ("what
+   topics ...") can be answered with an actual list.
 4. **Ranking** ([knowledge/ranking.py](knowledge/ranking.py)) — every fetched
    sentence is scored against the question with hand-rolled **BM25** (the
    algorithm behind classical search engines), weighted by source trust and

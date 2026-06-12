@@ -3,10 +3,15 @@ coherently, group into paragraphs, and attach numbered citations."""
 
 import re
 
-from .query import content_tokens
+from .query import VAGUE_WORDS, content_tokens
 
 MAX_SENTENCES = 7
 JACCARD_DUPLICATE = 0.55
+# Sentences scoring far below the best match are tangents, not support —
+# a shorter answer beats a padded one. List questions are held to a stricter
+# bar: the enumeration is the answer, padding only dilutes it.
+MIN_RELATIVE_SCORE = 0.2
+MIN_RELATIVE_SCORE_LIST = 0.4
 
 FALLBACK_ANSWER = (
     "I couldn't find solid information on that in my trusted sources. "
@@ -38,10 +43,26 @@ def _dedupe(sentences):
     return kept
 
 
+_LIST_OPENER = re.compile(
+    r"\bcovers topics including\b|\btopics include\b|\bcomprises\b", re.IGNORECASE
+)
+
+
 def _order(sentences, query):
     """Open with a definition-shaped sentence, preferring one from the passage
     whose title best matches the question topic (so the main article on a
-    subject beats tangent articles that merely mention it a lot)."""
+    subject beats tangent articles that merely mention it a lot). List
+    questions open with an enumeration when one was retrieved."""
+    if query.qtype == "list":
+        for sentence in sentences:  # already best-first
+            if _LIST_OPENER.search(sentence.text):
+                return [sentence] + [s for s in sentences if s is not sentence]
+
+    # How/why questions want the best explanation first, not a definition of
+    # the surrounding concept — keep score order.
+    if query.qtype in ("howto", "why"):
+        return sentences
+
     topic = set(content_tokens(query.topic))
 
     def opener_rank(sentence):
@@ -50,7 +71,11 @@ def _order(sentences, query):
         shaped = bool(_DEFINITION_OPENER.match(sentence.text))
         return (round(overlap, 2), shaped, sentence.score)
 
-    opener = max(sentences, key=opener_rank)
+    # Title overlap alone can't crown the opener — a demoted passage (e.g. a
+    # film sharing the topic's exact name) may have perfect overlap but a
+    # poor score. Only strong sentences are opener candidates.
+    pool = [s for s in sentences if s.score >= 0.5 * sentences[0].score]
+    opener = max(pool, key=opener_rank)
     if not _DEFINITION_OPENER.match(opener.text):
         return sentences
     rest = [s for s in sentences if s is not opener]
@@ -60,13 +85,14 @@ def _order(sentences, query):
 def _confidence(selected, query):
     if not selected:
         return "none"
-    covered = set()
-    needed = {token for keyword in query.keywords for token in [keyword.lower()]}
+    # Stemmed comparison ("covered" matches "covers"), filler words excluded.
+    substantive = [k for k in query.keywords if k not in VAGUE_WORDS]
+    needed = set(content_tokens(" ".join(substantive)))
     if not needed:
         return "low"
+    covered = set()
     for sentence in selected:
-        text = sentence.text.lower()
-        covered |= {term for term in needed if term in text}
+        covered |= needed & set(sentence.tokens)
     coverage = len(covered) / len(needed)
     if coverage >= 0.7 and len(selected) >= 3:
         return "high"
@@ -78,7 +104,10 @@ def _confidence(selected, query):
 def synthesize(query, ranked_sentences):
     """ranked_sentences: ScoredSentence list, best-first. Returns the response
     dict served by /api/ask."""
-    candidates = [s for s in ranked_sentences if s.score > 0][: MAX_SENTENCES * 3]
+    relative = MIN_RELATIVE_SCORE_LIST if query.qtype == "list" else MIN_RELATIVE_SCORE
+    floor = ranked_sentences[0].score * relative if ranked_sentences else 0
+    candidates = [s for s in ranked_sentences if s.score > 0 and s.score >= floor]
+    candidates = candidates[: MAX_SENTENCES * 3]
     selected = _dedupe(candidates)[:MAX_SENTENCES]
     confidence = _confidence(selected, query)
 

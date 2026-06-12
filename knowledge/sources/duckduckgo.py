@@ -12,7 +12,7 @@ class DuckDuckGoSource(Source):
         data = self.get(
             "https://api.duckduckgo.com/",
             {
-                "q": query.topic,
+                "q": query.search_terms,
                 "format": "json",
                 "no_html": 1,
                 "skip_disambig": 1,
@@ -25,7 +25,7 @@ class DuckDuckGoSource(Source):
             passages.append(
                 Passage(
                     text=abstract,
-                    title=data.get("Heading") or query.topic,
+                    title=data.get("Heading") or query.search_terms,
                     url=data.get("AbstractURL") or "https://duckduckgo.com",
                     source=data.get("AbstractSource") or self.name,
                     trust=self.trust,
