@@ -74,8 +74,11 @@ python -m pytest
 The repo is laid out for Vercel's Python serverless runtime:
 
 - [api/index.py](api/index.py) — function entry point exposing the Flask WSGI app
-- [vercel.json](vercel.json) — rewrites every non-static route to the function
-  and raises the function timeout to 30s (source fetching is capped at 10s)
+- [vercel.json](vercel.json) — rewrites every non-static route to the function.
+  No timeout config needed: source fetching is capped at 10s internally, well
+  under Vercel's default function duration. To change the limit anyway, use the
+  dashboard (Project → Settings → Functions) rather than a `functions` block —
+  pattern matching against Python functions in `vercel.json` is unreliable.
 - `public/` — the UI, served straight from Vercel's CDN (never invokes the
   function); Flask serves the same folder in local dev
 
