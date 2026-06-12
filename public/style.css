@@ -177,6 +177,60 @@ label {
 .citations a:hover { text-decoration: underline; }
 .citations .src { color: var(--muted); }
 
+.copilot-actions {
+  margin-top: 1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--panel-2);
+}
+
+#copilot-build {
+  background: transparent;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  color: var(--accent);
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 0.6rem 1.2rem;
+  cursor: pointer;
+}
+#copilot-build:hover { background: var(--accent); color: #fff; }
+
+.copilot-panel { margin-top: 0.85rem; }
+
+.copilot-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.45rem;
+}
+
+#copilot-copy {
+  background: var(--panel-2);
+  border: 1px solid var(--panel-2);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.35rem 0.9rem;
+  cursor: pointer;
+}
+#copilot-copy:hover { border-color: var(--accent); }
+
+#copilot-text {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--panel-2);
+  border-radius: 10px;
+  color: var(--text);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  padding: 0.8rem 1rem;
+  resize: vertical;
+  outline: none;
+}
+
 .status {
   margin: 0;
   padding: 0.85rem 1.1rem;

@@ -35,6 +35,17 @@
       </div>
       <ol id="week-list" class="week-list"></ol>
       <div id="citations" class="citations"></div>
+
+      <div class="copilot-actions">
+        <button type="button" id="copilot-build">Build GitHub Copilot project prompt</button>
+      </div>
+      <div id="copilot-panel" class="copilot-panel" hidden>
+        <div class="copilot-head">
+          <label for="copilot-text">Copilot prompt — paste into Copilot Chat in a new repository</label>
+          <button type="button" id="copilot-copy">Copy</button>
+        </div>
+        <textarea id="copilot-text" rows="16" readonly spellcheck="false"></textarea>
+      </div>
     </section>
 
     <p id="status" class="status" hidden></p>

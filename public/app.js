@@ -1,4 +1,11 @@
 const form = document.getElementById("schedule-form");
+const copilotBuildButton = document.getElementById("copilot-build");
+const copilotPanel = document.getElementById("copilot-panel");
+const copilotText = document.getElementById("copilot-text");
+const copilotCopyButton = document.getElementById("copilot-copy");
+
+let lastSchedule = null;
+let lastDescription = "";
 const descriptionInput = document.getElementById("description");
 const weeksInput = document.getElementById("weeks");
 const generateButton = document.getElementById("generate");
@@ -71,6 +78,60 @@ function renderSchedule(data) {
   resultSection.hidden = false;
 }
 
+// Stitch the schedule into a Copilot prompt that scaffolds a week-by-week
+// student project repository. Plain templating — no AI on this side.
+function buildCopilotPrompt(data, description) {
+  const scheduleLines = data.weeks
+    .map((week) => `- Week ${week.week}: ${week.topics.join("; ")}`)
+    .join("\n");
+
+  const reviewNote = data.weeks.some((week) =>
+    week.topics.some((topic) => /^(Midterm review|Review and final)/.test(topic))
+  )
+    ? "- Review/assessment weeks become checkpoint milestones: students integrate prior weeks' work and complete a short self-assessment quiz instead of starting new material.\n"
+    : "";
+
+  return `Create a complete week-by-week educational project repository for a college course on ${data.subject}.
+
+## Course description
+${description}
+
+## Weekly topic schedule (${data.weeks.length} weeks)
+${scheduleLines}
+
+## What to generate
+- One folder per week named like \`week-01-<topic-slug>\`, each containing:
+  - \`README.md\` with the week's learning objectives, a plain-English explanation of the topic(s), and step-by-step exercises that build on previous weeks
+  - Starter code with clearly marked \`TODO\` sections for students to complete
+  - Automated tests students can run to verify their work before moving on
+- A top-level \`README.md\` with the course overview, the full schedule as a table, environment setup instructions, and grading/checkpoint guidance
+- One capstone project thread that evolves across the term: each week's exercises add a feature to the same application, so by the final week students have built one complete project that exercises every topic above
+${reviewNote}- Choose the most appropriate language and tooling for ${data.subject}, keep dependencies minimal, and make everything runnable with one setup command
+- Write for students seeing these topics for the first time: explain why each topic matters before showing how, and keep each week's workload roughly equal
+
+Generate the full directory structure and file contents.`;
+}
+
+copilotBuildButton.addEventListener("click", () => {
+  if (!lastSchedule) return;
+  copilotText.value = buildCopilotPrompt(lastSchedule, lastDescription);
+  copilotPanel.hidden = false;
+  copilotText.scrollIntoView({ behavior: "smooth", block: "nearest" });
+});
+
+copilotCopyButton.addEventListener("click", async () => {
+  copilotText.select();
+  try {
+    await navigator.clipboard.writeText(copilotText.value);
+  } catch (error) {
+    document.execCommand("copy"); // fallback for non-secure contexts
+  }
+  copilotCopyButton.textContent = "Copied!";
+  setTimeout(() => {
+    copilotCopyButton.textContent = "Copy";
+  }, 1500);
+});
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   const description = descriptionInput.value.trim();
@@ -92,6 +153,9 @@ form.addEventListener("submit", async (event) => {
       showStatus(data.error || "Something went wrong.", "error");
     } else {
       hideStatus();
+      lastSchedule = data;
+      lastDescription = description;
+      copilotPanel.hidden = true;
       renderSchedule(data);
     }
   } catch (error) {
