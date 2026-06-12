@@ -71,16 +71,14 @@ python -m pytest
 
 ## Deploy (Vercel)
 
-The repo is laid out for Vercel's Python serverless runtime:
+Vercel natively detects Flask: `app.py` at the repo root exposing the WSGI
+`app` variable is the entrypoint, and every route — including the static
+files in `public/` — is handled by the app. No `vercel.json`, no `api/`
+directory, no config. The Framework Preset in Project → Settings should show
+**Flask** (set it manually if the project was created as "Other").
 
-- [api/index.py](api/index.py) — function entry point exposing the Flask WSGI app
-- [vercel.json](vercel.json) — rewrites every non-static route to the function.
-  No timeout config needed: source fetching is capped at 10s internally, well
-  under Vercel's default function duration. To change the limit anyway, use the
-  dashboard (Project → Settings → Functions) rather than a `functions` block —
-  pattern matching against Python functions in `vercel.json` is unreliable.
-- `public/` — the UI, served straight from Vercel's CDN (never invokes the
-  function); Flask serves the same folder in local dev
+No timeout config is needed either: source fetching is capped at 10s
+internally, well under Vercel's default function duration.
 
 Deploy with the CLI, or just import the repo at vercel.com:
 
