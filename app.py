@@ -1,9 +1,11 @@
+import io
 import logging
 
-from flask import Flask, jsonify, redirect, request
+from flask import Flask, jsonify, redirect, request, send_file
 from werkzeug.exceptions import NotFound
 
 from knowledge import schedule
+from knowledge.materials import MaterialsError, build_materials
 
 logging.basicConfig(level=logging.INFO)
 
@@ -14,6 +16,8 @@ app = Flask(__name__, static_folder="public", static_url_path="")
 
 MAX_DESCRIPTION_LENGTH = 5000
 MIN_DESCRIPTION_LENGTH = 15
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES + 1024 * 1024
 
 
 @app.route("/")
@@ -53,6 +57,30 @@ def make_schedule():
     if "error" in result:
         return jsonify(result), 422
     return jsonify(result)
+
+
+@app.route("/api/materials", methods=["POST"])
+def make_materials():
+    upload = request.files.get("project")
+    if upload is None or not upload.filename:
+        return jsonify({"error": "Upload the generated project as a .zip file."}), 400
+    data = upload.read()
+    if len(data) > MAX_UPLOAD_BYTES:
+        return jsonify({"error": "Zip too large (max 20 MB)."}), 413
+    try:
+        payload, summary = build_materials(data)
+    except MaterialsError as error:
+        return jsonify({"error": str(error)}), 422
+    except Exception:
+        app.logger.exception("materials generation failed")
+        return jsonify({"error": "Something went wrong while generating materials."}), 500
+    app.logger.info("materials generated: %s units", summary["units"])
+    return send_file(
+        io.BytesIO(payload),
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name="course-materials.zip",
+    )
 
 
 if __name__ == "__main__":

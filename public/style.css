@@ -231,6 +231,41 @@ label {
   outline: none;
 }
 
+.materials-title { margin: 0; font-size: 1.05rem; }
+.materials-hint { margin: 0; color: var(--muted); font-size: 0.88rem; line-height: 1.5; }
+.materials-hint code { color: var(--accent); }
+
+#project-zip {
+  flex: 1;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+#project-zip::file-selector-button {
+  background: var(--panel-2);
+  border: 1px solid var(--panel-2);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.88rem;
+  padding: 0.45rem 0.9rem;
+  margin-right: 0.8rem;
+  cursor: pointer;
+}
+#project-zip::file-selector-button:hover { border-color: var(--accent); }
+
+#materials-generate {
+  background: var(--accent-2);
+  border: none;
+  border-radius: 10px;
+  color: #10241a;
+  font-size: 0.95rem;
+  font-weight: 700;
+  padding: 0.65rem 1.3rem;
+  cursor: pointer;
+}
+#materials-generate:disabled { opacity: 0.5; cursor: wait; }
+
+.materials .status { margin-top: 0.75rem; }
+
 .status {
   margin: 0;
   padding: 0.85rem 1.1rem;

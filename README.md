@@ -37,6 +37,29 @@ Results are cached in memory for an hour. Confidence is "high" when 2+
 independent sources corroborate the curriculum, "medium" for one, "low" when
 the schedule comes only from the description itself.
 
+## Course materials generator
+
+After Copilot generates the project repository from the prompt, upload its zip
+back into the app ("Generate course materials") and get — with zero AI:
+
+- `lectures/week-NN-*.pptx` — a slide deck per unit, built from the teaching
+  comments in each unit's starter code
+- `lms/week-NN-*.md` — a weekly LMS introduction post per unit
+- `assignments/week-NN-*.md` — assignment instructions per week
+- `rubric.json` — a deterministic rubric for a **non-LLM grader API**: every
+  criterion is a mechanical check (pytest results, placeholder lines absent,
+  file compiles, files present) with weights summing to 100; the embedded
+  `grader_contract` documents how to evaluate each criterion type
+
+The parser ([knowledge/materials.py](knowledge/materials.py)) expects the
+structure the Copilot prompt produces: unit folders containing
+`INSTRUCTIONS.md`, starter code, and `test_*.py` contract tests. Units are
+ordered assignments-first (numeric), then review/exam pairs, then the final.
+
+Note: Vercel caps request bodies around 4.5 MB — large project zips upload
+fine locally but may need slimming (drop `node_modules`/binaries) for the
+deployed endpoint.
+
 ## Run it locally
 
 ```sh

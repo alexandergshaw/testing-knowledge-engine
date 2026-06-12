@@ -1,0 +1,592 @@
+"""Project zip -> course materials: a PPTX lecture per unit, an LMS intro per
+unit, assignment instructions per unit, and one deterministic machine-readable
+rubric for the whole course. Pure extraction + templating — no LLM.
+
+Built around the structure the Copilot project prompt produces:
+
+    assignments/<unit>/INSTRUCTIONS.md   # H1 = "assignment1: Topic, Names"
+    assignments/<unit>/student_code.py   # teaching banner + docstring tasks
+    assignments/<unit>/test_assignment.py# unittest contract = grading criteria
+"""
+
+import ast
+import io
+import json
+import re
+import zipfile
+from dataclasses import dataclass, field
+
+from pptx import Presentation
+from pptx.util import Inches, Pt
+
+MAX_ZIP_ENTRIES = 2000
+MAX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
+SKIP_PARTS = {"__pycache__", "node_modules", ".git", ".next", "app", "solutions"}
+
+# Slide content limits — lectures must stay readable.
+MAX_CONCEPT_SLIDES = 6
+MAX_EXPLANATION_CHARS = 700
+MAX_EXAMPLE_LINES = 12
+
+PLACEHOLDER_LITERALS = ["Your Name", "TODO", "FIXME"]
+
+
+class MaterialsError(ValueError):
+    """User-facing problem with the uploaded project."""
+
+
+@dataclass
+class Unit:
+    slug: str
+    path: str                 # repo-relative folder, e.g. assignments/assignment1
+    title: str
+    topic: str
+    week: int = 0
+    sections: dict = field(default_factory=dict)   # "## Heading" -> text
+    concepts: list = field(default_factory=list)   # {name, explanation, example}
+    tasks: list = field(default_factory=list)
+    rules: list = field(default_factory=list)
+    steps: list = field(default_factory=list)
+    tests: list = field(default_factory=list)      # test method names
+    test_file: str = ""
+    code_file: str = ""
+    placeholder_lines: list = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Zip reading
+
+
+def _read_zip(zip_bytes):
+    """path -> text for every safe text entry, with zip-bomb guards and the
+    top-level wrapper folder (github's `repo-main/`) stripped."""
+    archive = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    infos = [i for i in archive.infolist() if not i.is_dir()]
+    if len(infos) > MAX_ZIP_ENTRIES:
+        raise MaterialsError("Zip has too many files.")
+    if sum(i.file_size for i in infos) > MAX_UNCOMPRESSED_BYTES:
+        raise MaterialsError("Zip is too large when uncompressed.")
+
+    files = {}
+    for info in infos:
+        path = info.filename.replace("\\", "/")
+        parts = path.split("/")
+        if ".." in parts or any(p in SKIP_PARTS for p in parts) or parts[-1].startswith("."):
+            continue
+        files[path] = archive.read(info).decode("utf-8", errors="replace")
+
+    # Strip a single common root folder if present.
+    roots = {p.split("/")[0] for p in files}
+    if len(roots) == 1 and all("/" in p for p in files):
+        files = {p.split("/", 1)[1]: text for p, text in files.items()}
+    return files
+
+
+# ---------------------------------------------------------------------------
+# Unit parsing
+
+
+def _unit_sort_key(slug):
+    """assignment0..N first (numeric), then reviewN/examN paired by number
+    (review before its exam), final last. Deterministic for any project."""
+    match = re.match(r"([a-zA-Z]+)(\d*)$", slug)
+    name = match.group(1).lower() if match else slug.lower()
+    number = int(match.group(2)) if match and match.group(2) else 0
+    if name == "assignment":
+        return (0, number, 0, slug)
+    if name == "review":
+        return (1, number, 0, slug)
+    if name == "exam" or name == "test":
+        return (1, number, 1, slug)
+    if name == "final":
+        return (2, number, 0, slug)
+    return (0, number, 1, slug)  # unknown unit kinds ride along with assignments
+
+
+def _parse_instructions(text):
+    """(title, topic, sections). Title is the H1; topic is what follows the
+    colon in it ('assignment1: Variables, I/O' -> 'Variables, I/O')."""
+    title, topic = "", ""
+    sections, current, buffer = {}, None, []
+    for line in text.splitlines():
+        h1 = re.match(r"^#\s+(.+)$", line)
+        h2 = re.match(r"^##\s+(.+)$", line)
+        if h1 and not h2 and not title:
+            title = h1.group(1).strip()
+            continue
+        if h2:
+            if current:
+                sections[current] = "\n".join(buffer).strip()
+            current, buffer = h2.group(1).strip(), []
+            continue
+        if current is not None:
+            buffer.append(line)
+    if current:
+        sections[current] = "\n".join(buffer).strip()
+    if ":" in title:
+        topic = title.split(":", 1)[1].strip()
+    return title, topic or title, sections
+
+
+# Concept names start with an ALL-CAPS word but may carry lowercase asides:
+# "3. BRANCHING (if / elif / else) — ...". The separator is an em/en dash.
+_CONCEPT_START = re.compile(r"^#\s{1,4}(\d+)\.\s+([A-Z][A-Z0-9'‐-]+[^—–]{0,60}?)\s*[—–]\s+(.*)$")
+
+
+def _concept_case(name):
+    """BRANCHING (if / elif / else) -> Branching (if / elif / else)."""
+    return " ".join(
+        word.capitalize() if word.isupper() and len(word) > 1 else word
+        for word in name.split()
+    )
+
+
+def _parse_banner_concepts(code_text):
+    """Numbered concepts from the teaching comment banner at the top of the
+    starter file: '#  1. VARIABLES — explanation' followed by prose and
+    deeper-indented code-example lines."""
+    concepts = []
+    current = None
+    for line in code_text.splitlines():
+        if not line.lstrip().startswith("#"):
+            if line.strip():
+                break  # banner over at first real code
+            continue
+        body = line.lstrip()[1:]
+        start = _CONCEPT_START.match(line)
+        if start:
+            current = {
+                "name": _concept_case(start.group(2).strip()),
+                "explanation": start.group(3).strip(),
+                "example": [],
+            }
+            concepts.append(current)
+            continue
+        if current is None:
+            continue
+        stripped = body.rstrip()
+        if not stripped.strip("# ─-—–"):
+            continue
+        if stripped.startswith("      "):  # deep indent = code example line
+            current["example"].append(stripped.strip())
+        else:
+            current["explanation"] = (
+                current["explanation"] + " " + stripped.strip()
+            ).strip()
+    for concept in concepts:
+        concept["explanation"] = re.sub(r"\s+", " ", concept["explanation"])[
+            :MAX_EXPLANATION_CHARS
+        ]
+        concept["example"] = concept["example"][:MAX_EXAMPLE_LINES]
+    return concepts
+
+
+def _parse_docstring_tasks(code_text):
+    """('Your job:' numbered steps, 'Remember the rules:' bullets) from any
+    function docstring in the starter file."""
+    tasks, rules = [], []
+    try:
+        tree = ast.parse(code_text)
+    except SyntaxError:
+        return tasks, rules
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        doc = ast.get_docstring(node) or ""
+        mode = None
+        for line in doc.splitlines():
+            stripped = line.strip()
+            if re.match(r"your job\s*:", stripped, re.IGNORECASE):
+                mode = "tasks"
+                continue
+            if re.match(r"remember the rules\s*:", stripped, re.IGNORECASE):
+                mode = "rules"
+                continue
+            numbered = re.match(r"^(\d+)\.\s+(.*)$", stripped)
+            bullet = re.match(r"^[-*]\s+(.*)$", stripped)
+            if mode == "tasks" and numbered:
+                tasks.append(numbered.group(2).strip())
+            elif mode == "tasks" and tasks and stripped and not bullet:
+                tasks[-1] = f"{tasks[-1]} {stripped}"
+            elif mode == "rules" and bullet:
+                rules.append(bullet.group(1).strip())
+            elif stripped == "":
+                continue
+    return tasks, rules
+
+
+_STEP_MARKER = re.compile(r"#\s*[─—–-]*\s*Step\s*(\d+)\s*:\s*(.*?)\s*[─—–-]*\s*$")
+
+
+def _parse_step_markers(code_text):
+    steps = []
+    for line in code_text.splitlines():
+        match = _STEP_MARKER.search(line)
+        if match:
+            steps.append(match.group(2).strip())
+    return steps
+
+
+def _parse_tests(test_text):
+    try:
+        tree = ast.parse(test_text)
+    except SyntaxError:
+        return []
+    return sorted(
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")
+    )
+
+
+def _find_placeholders(code_text):
+    """Exact starter-code lines a finished submission must have changed —
+    deterministic sentinels for the rubric's static check."""
+    lines = []
+    for line in code_text.splitlines():
+        stripped = line.strip()
+        if any(literal in stripped for literal in PLACEHOLDER_LITERALS) and (
+            "=" in stripped and not stripped.startswith("#")
+        ):
+            lines.append(stripped)
+        elif re.match(r"^\w+\s*=\s*(\[\]|\{\}|\"\"|'')\s*(#.*)?$", stripped):
+            lines.append(stripped)
+    return sorted(set(lines))
+
+
+def humanize_test(name):
+    return name.removeprefix("test_").replace("_", " ").strip()
+
+
+def parse_project(zip_bytes):
+    """All teachable units in the uploaded project, in course order."""
+    try:
+        files = _read_zip(zip_bytes)
+    except zipfile.BadZipFile:
+        raise MaterialsError("That file isn't a valid zip archive.")
+
+    folders = {}
+    for path in files:
+        if path.lower().endswith("instructions.md"):
+            folders[path.rsplit("/", 1)[0]] = path
+    if not folders:
+        raise MaterialsError(
+            "No units found: expected folders containing an INSTRUCTIONS.md "
+            "(the structure the Copilot project prompt generates)."
+        )
+
+    units = []
+    for folder, instructions_path in folders.items():
+        slug = folder.rsplit("/", 1)[-1]
+        title, topic, sections = _parse_instructions(files[instructions_path])
+        unit = Unit(slug=slug, path=folder, title=title or slug, topic=topic or slug)
+        unit.sections = sections
+
+        in_folder = [p for p in files if p.startswith(folder + "/")]
+        test_files = sorted(p for p in in_folder if re.search(r"/test_[^/]+\.py$", p))
+        code_files = sorted(
+            p
+            for p in in_folder
+            if p.endswith(".py") and p not in test_files
+        )
+        preferred = [p for p in code_files if p.endswith("student_code.py")]
+        unit.code_file = (preferred or code_files or [""])[0]
+        unit.test_file = (test_files or [""])[0]
+
+        if unit.code_file:
+            code_text = files[unit.code_file]
+            unit.concepts = _parse_banner_concepts(code_text)
+            unit.tasks, unit.rules = _parse_docstring_tasks(code_text)
+            unit.steps = _parse_step_markers(code_text)
+            unit.placeholder_lines = _find_placeholders(code_text)
+        if unit.test_file:
+            unit.tests = _parse_tests(files[unit.test_file])
+        units.append(unit)
+
+    units.sort(key=lambda u: _unit_sort_key(u.slug))
+    for week, unit in enumerate(units, start=1):
+        unit.week = week
+    return units
+
+
+# ---------------------------------------------------------------------------
+# Generators
+
+
+def _add_bullet_slide(deck, heading, bullets, sub_bullets=None):
+    slide = deck.slides.add_slide(deck.slide_layouts[1])
+    slide.shapes.title.text = heading
+    body = slide.placeholders[1].text_frame
+    body.clear()
+    for index, bullet in enumerate(bullets):
+        paragraph = body.paragraphs[0] if index == 0 else body.add_paragraph()
+        paragraph.text = bullet
+        paragraph.font.size = Pt(20)
+    for sub in sub_bullets or []:
+        paragraph = body.add_paragraph()
+        paragraph.text = sub
+        paragraph.level = 1
+        paragraph.font.size = Pt(16)
+    return slide
+
+
+def _add_code_box(slide, lines):
+    box = slide.shapes.add_textbox(Inches(0.7), Inches(3.4), Inches(8.6), Inches(3.4))
+    frame = box.text_frame
+    frame.word_wrap = True
+    for index, line in enumerate(lines):
+        paragraph = frame.paragraphs[0] if index == 0 else frame.add_paragraph()
+        paragraph.text = line
+        paragraph.font.name = "Consolas"
+        paragraph.font.size = Pt(14)
+
+
+def build_lecture(unit):
+    """One PPTX lecture for a unit, as bytes."""
+    deck = Presentation()
+
+    title_slide = deck.slides.add_slide(deck.slide_layouts[0])
+    title_slide.shapes.title.text = f"Week {unit.week}: {unit.topic}"
+    title_slide.placeholders[1].text = unit.title
+
+    objectives = []
+    if unit.sections.get("Learning target"):
+        objectives.append(unit.sections["Learning target"].splitlines()[0])
+    objectives.extend(f"Understand {c['name']}" for c in unit.concepts)
+    if not objectives:
+        objectives = [f"Work through this week's unit: {unit.topic}"]
+    _add_bullet_slide(deck, "This week's goals", objectives[:7])
+
+    for concept in unit.concepts[:MAX_CONCEPT_SLIDES]:
+        slide = deck.slides.add_slide(deck.slide_layouts[5])
+        slide.shapes.title.text = concept["name"]
+        box = slide.shapes.add_textbox(Inches(0.7), Inches(1.4), Inches(8.6), Inches(1.9))
+        frame = box.text_frame
+        frame.word_wrap = True
+        frame.text = concept["explanation"]
+        frame.paragraphs[0].font.size = Pt(18)
+        if concept["example"]:
+            _add_code_box(slide, concept["example"])
+
+    if unit.tasks or unit.steps:
+        _add_bullet_slide(
+            deck,
+            "Your task this week",
+            [f"{i}. {t}" for i, t in enumerate(unit.tasks or unit.steps, 1)][:7],
+            sub_bullets=[f"Rule: {r}" for r in unit.rules][:5],
+        )
+
+    if unit.tests:
+        _add_bullet_slide(
+            deck,
+            "How you'll be graded",
+            ["The automated tests check that:"]
+            + [f"• {humanize_test(t)}" for t in unit.tests][:8]
+            + ["Run the tests yourself before submitting!"],
+        )
+
+    if unit.sections.get("Starter workflow (GUI-only)") or unit.sections.get("Starter workflow"):
+        workflow = unit.sections.get("Starter workflow (GUI-only)") or unit.sections.get(
+            "Starter workflow"
+        )
+        bullets = [
+            line.lstrip("-* ").strip()
+            for line in workflow.splitlines()
+            if line.strip()
+        ]
+        _add_bullet_slide(deck, "Workflow reminder", bullets[:7])
+
+    output = io.BytesIO()
+    deck.save(output)
+    return output.getvalue()
+
+
+def build_lms_intro(unit, course_title):
+    objectives = "\n".join(f"- Understand **{c['name'].lower()}**" for c in unit.concepts)
+    target = unit.sections.get("Learning target", "").strip()
+    grading = "\n".join(f"- {humanize_test(t)}" for t in unit.tests)
+    return f"""# Week {unit.week}: {unit.topic}
+
+Welcome to week {unit.week} of {course_title}! This week we tackle **{unit.topic}**.
+
+## What you'll learn
+{objectives or f"- The fundamentals of {unit.topic}"}
+
+## This week's goal
+{target or f"Complete the {unit.slug} unit and make all of its automated tests pass."}
+
+## What to do
+1. Read this week's lecture slides.
+2. Open `{unit.path}/` in the project and read the instructions.
+3. Complete the starter code where marked, testing as you go.
+4. Commit your work and confirm the automated tests pass.
+
+## How you'll be graded
+Your submission is graded automatically and deterministically:
+{grading or "- The unit's automated checks pass"}
+- No placeholder/starter values remain in your code
+- Your code runs without syntax errors
+
+Post in the discussion forum if you get stuck — struggling is part of learning,
+but staying stuck isn't.
+"""
+
+
+def build_assignment_doc(unit):
+    parts = [f"# Week {unit.week} Assignment — {unit.topic}", ""]
+    if unit.sections.get("Learning target"):
+        parts += ["## Goal", unit.sections["Learning target"], ""]
+    if unit.tasks:
+        parts += ["## Your job"] + [f"{i}. {t}" for i, t in enumerate(unit.tasks, 1)] + [""]
+    elif unit.steps:
+        parts += ["## Steps"] + [f"{i}. {s}" for i, s in enumerate(unit.steps, 1)] + [""]
+    if unit.rules:
+        parts += ["## Rules your solution must follow"] + [f"- {r}" for r in unit.rules] + [""]
+    workflow = unit.sections.get("Starter workflow (GUI-only)") or unit.sections.get(
+        "Starter workflow"
+    )
+    if workflow:
+        parts += ["## Workflow", workflow, ""]
+    for heading, text in unit.sections.items():
+        if heading.lower().startswith(("learning target", "starter workflow")):
+            continue
+        parts += [f"## {heading}", text, ""]
+    if unit.test_file:
+        parts += [
+            "## Check your work",
+            f"Run the automated tests in `{unit.test_file}`. Your submission is "
+            "graded on these exact tests — if they pass for you, they pass for "
+            "the grader.",
+            "",
+        ]
+        parts += [f"- {humanize_test(t)}" for t in unit.tests]
+    return "\n".join(parts).strip() + "\n"
+
+
+def build_rubric(units):
+    """One deterministic rubric for the whole course, consumable by a non-LLM
+    grader. Every criterion is a mechanical check; weights sum to 100."""
+    rubric_units = []
+    for unit in units:
+        criteria = []
+        if unit.tests:
+            criteria.append(
+                {
+                    "id": "tests_pass",
+                    "type": "pytest",
+                    "target": unit.test_file,
+                    "tests": unit.tests,
+                    "scoring": "weight * (passed_tests / total_tests)",
+                    "weight": 60,
+                }
+            )
+        if unit.placeholder_lines:
+            criteria.append(
+                {
+                    "id": "placeholders_resolved",
+                    "type": "forbidden_lines_absent",
+                    "file": unit.code_file,
+                    "forbidden_lines": unit.placeholder_lines,
+                    "scoring": "weight * (1 - found_lines / total_forbidden_lines)",
+                    "weight": 20,
+                }
+            )
+        if unit.code_file:
+            criteria.append(
+                {
+                    "id": "code_compiles",
+                    "type": "python_compiles",
+                    "file": unit.code_file,
+                    "scoring": "weight if py_compile succeeds else 0",
+                    "weight": 10,
+                }
+            )
+        required = sorted(
+            p for p in [unit.code_file, unit.test_file, f"{unit.path}/INSTRUCTIONS.md"] if p
+        )
+        criteria.append(
+            {
+                "id": "required_files_present",
+                "type": "files_present",
+                "required": required,
+                "scoring": "weight * (present_files / required_files)",
+                "weight": 10,
+            }
+        )
+        # Renormalize so weights always sum to exactly 100.
+        total = sum(c["weight"] for c in criteria)
+        scaled = [int(c["weight"] * 100 / total) for c in criteria]
+        scaled[0] += 100 - sum(scaled)
+        for criterion, weight in zip(criteria, scaled):
+            criterion["weight"] = weight
+
+        rubric_units.append(
+            {
+                "id": unit.slug,
+                "week": unit.week,
+                "topic": unit.topic,
+                "path": unit.path,
+                "max_points": 100,
+                "criteria": criteria,
+            }
+        )
+
+    return {
+        "version": 1,
+        "scale": {"max_points_per_unit": 100},
+        "grader_contract": {
+            "pytest": "Run the listed tests against the submission with pytest; "
+            "score = weight * passed/total.",
+            "forbidden_lines_absent": "Strip whitespace from each submission line; "
+            "score = weight * (1 - matches/total) where a match is any forbidden "
+            "line appearing verbatim.",
+            "python_compiles": "Byte-compile the file (py_compile); full weight "
+            "on success, zero on SyntaxError.",
+            "files_present": "score = weight * (present/required).",
+        },
+        "units": rubric_units,
+    }
+
+
+def _slugify(text):
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:40] or "unit"
+
+
+def build_materials(zip_bytes, course_title="this course"):
+    """The full course-materials zip (bytes) plus a summary dict."""
+    units = parse_project(zip_bytes)
+
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as bundle:
+        manifest = [
+            "# Course materials",
+            "",
+            f"Generated deterministically from the uploaded project ({len(units)} units).",
+            "",
+            "| Week | Unit | Topic |",
+            "|---|---|---|",
+        ]
+        for unit in units:
+            stem = f"week-{unit.week:02d}-{_slugify(unit.topic)}"
+            bundle.writestr(f"lectures/{stem}.pptx", build_lecture(unit))
+            bundle.writestr(f"lms/{stem}.md", build_lms_intro(unit, course_title))
+            bundle.writestr(f"assignments/{stem}.md", build_assignment_doc(unit))
+            manifest.append(f"| {unit.week} | {unit.slug} | {unit.topic} |")
+        bundle.writestr(
+            "rubric.json", json.dumps(build_rubric(units), indent=2, sort_keys=False)
+        )
+        manifest += [
+            "",
+            "- `lectures/` — one PPTX lecture per week",
+            "- `lms/` — weekly LMS introduction posts (markdown)",
+            "- `assignments/` — weekly assignment instructions (markdown)",
+            "- `rubric.json` — deterministic rubric for a non-LLM grader "
+            "(see its `grader_contract`)",
+        ]
+        bundle.writestr("MANIFEST.md", "\n".join(manifest) + "\n")
+
+    summary = {
+        "units": len(units),
+        "weeks": [{"week": u.week, "unit": u.slug, "topic": u.topic} for u in units],
+    }
+    return output.getvalue(), summary

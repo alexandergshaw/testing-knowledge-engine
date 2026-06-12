@@ -132,6 +132,57 @@ copilotCopyButton.addEventListener("click", async () => {
   }, 1500);
 });
 
+// --- Course materials upload -------------------------------------------------
+const materialsForm = document.getElementById("materials-form");
+const materialsInput = document.getElementById("project-zip");
+const materialsButton = document.getElementById("materials-generate");
+const materialsStatus = document.getElementById("materials-status");
+
+function showMaterialsStatus(message, kind) {
+  materialsStatus.textContent = message;
+  materialsStatus.className = `status ${kind || ""}`;
+  materialsStatus.hidden = false;
+}
+
+materialsForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const file = materialsInput.files[0];
+  if (!file) return;
+
+  materialsButton.disabled = true;
+  showMaterialsStatus("Extracting topics and building materials", "loading");
+
+  try {
+    const body = new FormData();
+    body.append("project", file);
+    const response = await fetch("/api/materials", { method: "POST", body });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      showMaterialsStatus(data.error || "Something went wrong.", "error");
+      return;
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "course-materials.zip";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showMaterialsStatus(
+      "Done — course-materials.zip downloaded (lectures, LMS intros, assignments, rubric.json).",
+      ""
+    );
+  } catch (error) {
+    showMaterialsStatus("Network error — is the server running?", "error");
+  } finally {
+    materialsButton.disabled = false;
+  }
+});
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   const description = descriptionInput.value.trim();
