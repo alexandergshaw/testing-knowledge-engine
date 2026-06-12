@@ -20,16 +20,23 @@ _TOPIC_HEADING = re.compile(
     r"lesson|topic|content|outline|syllabus|curriculum|chapter|unit|module|concept",
     re.IGNORECASE,
 )
+# Sections that hold links and meta material, never course topics. Applies
+# even in whole-page mode.
+_BAD_HEADING = re.compile(
+    r"see also|reference|external link|resource|further reading|participation|"
+    r"bibliograph|notes|readings|alumni|notable",
+    re.IGNORECASE,
+)
 _HEADING_LINE = re.compile(r"^=+\s*(.*?)\s*=+$")
 
 
-def harvest_list(text, title):
-    """Find the longest run of consecutive short non-prose lines under a
-    curriculum-shaped heading and turn it into a single citable sentence:
-    '<title> covers topics including: ...'."""
+def harvest_items(text, title, whole_page=False):
+    """All topic-list items from runs of consecutive short non-prose lines
+    under curriculum-shaped headings, in page order. whole_page=True trusts
+    every section (for pages we deliberately requested as curricula)."""
     # "Outline of X" pages are topical guides — every section qualifies.
-    whole_page_ok = title.lower().startswith("outline of")
-    runs, current, heading_ok = [], [], False
+    whole_page_ok = whole_page or title.lower().startswith("outline of")
+    items, current, heading_ok, heading_bad = [], [], False, False
     for raw_line in text.split("\n") + [""]:
         stripped_line = raw_line.strip()
         heading = _HEADING_LINE.match(stripped_line)
@@ -43,14 +50,55 @@ def harvest_list(text, title):
             current.append(line)
             continue
         # The run that just ended belongs to the heading it was collected under.
-        if len(current) >= LIST_MIN_RUN and (heading_ok or whole_page_ok):
-            runs.append(current)
+        if (
+            len(current) >= LIST_MIN_RUN
+            and (heading_ok or whole_page_ok)
+            and not heading_bad
+        ):
+            items.extend(current)
         current = []
         if heading:
             heading_ok = bool(_TOPIC_HEADING.search(heading.group(1)))
-    if not runs:
+            heading_bad = bool(_BAD_HEADING.search(heading.group(1)))
+    return items
+
+
+# Headings that describe the article apparatus, not subject matter.
+_GENERIC_HEADING = re.compile(
+    r"^(overview|etymology|terminology|definitions?|gallery|examples)$",
+    re.IGNORECASE,
+)
+
+
+_TOP_HEADING_LINE = re.compile(r"^==([^=].*?)==$")
+
+
+def harvest_headings(text):
+    """Top-level section headings of an article as a topical breakdown — the
+    generic fallback when a subject has no published curriculum page.
+    Sub-headings are excluded ('Legality' is a topic; its 'Belgium' isn't)."""
+    headings = []
+    for line in text.split("\n"):
+        match = _TOP_HEADING_LINE.match(line.strip())
+        if not match:
+            continue
+        name = match.group(1).strip("= ").strip()
+        if not 2 <= len(name) <= 60:
+            continue
+        if _BAD_HEADING.search(name) or _GENERIC_HEADING.match(name):
+            continue
+        if name not in headings:
+            headings.append(name)
+    return headings
+
+
+def harvest_list(text, title):
+    """The longest harvested run as a single citable sentence:
+    '<title> covers topics including: ...'."""
+    items = harvest_items(text, title)
+    if not items:
         return None
-    items = max(runs, key=len)[:LIST_MAX_ITEMS]
+    items = items[:LIST_MAX_ITEMS]
     sentence = f"{title} covers topics including: {', '.join(items)}."
     while len(sentence) > LIST_SENTENCE_MAX_CHARS and len(items) > LIST_MIN_RUN:
         items = items[:-1]
@@ -107,6 +155,77 @@ class MediaWikiSource(Source):
             )
         return passages
 
+    def fetch_titles(self, titles):
+        """Deterministic lookup of specific pages (no search). Returns
+        (resolved_title, raw_extract, url) per existing page, deduped after
+        redirect resolution. One batched existence query first (cheap), then
+        one extract request per existing page — the TextExtracts API returns
+        only ONE whole-page extract per request, so batching extracts
+        silently drops all but the first page."""
+        if not titles:
+            return []
+        try:
+            data = self.get(
+                f"https://{self.host}/w/api.php",
+                {
+                    "action": "query",
+                    "titles": "|".join(titles),
+                    "redirects": 1,
+                    "format": "json",
+                },
+            )
+        except Exception:
+            return []
+        existing = []
+        for page in data.get("query", {}).get("pages", {}).values():
+            title = page.get("title", "")
+            if "missing" not in page and title and title not in existing:
+                existing.append(title)
+
+        results = []
+        for title in existing:
+            try:
+                data = self.get(
+                    f"https://{self.host}/w/api.php",
+                    {
+                        "action": "query",
+                        "titles": title,
+                        "prop": "extracts",
+                        "explaintext": 1,
+                        "exlimit": "max",
+                        "redirects": 1,
+                        "format": "json",
+                    },
+                )
+            except Exception:
+                continue
+            for page in data.get("query", {}).get("pages", {}).values():
+                raw = page.get("extract") or ""
+                if raw:
+                    results.append(
+                        (
+                            page.get("title", title),
+                            raw,
+                            f"https://{self.host}/wiki/{title.replace(' ', '_')}",
+                        )
+                    )
+        return results
+
+    def search_titles(self, terms, limit=3):
+        """Top page titles for a search query — for finding curriculum pages
+        whose exact titles can't be guessed."""
+        data = self.get(
+            f"https://{self.host}/w/api.php",
+            {
+                "action": "query",
+                "list": "search",
+                "srsearch": terms,
+                "srlimit": limit,
+                "format": "json",
+            },
+        )
+        return [item["title"] for item in data.get("query", {}).get("search", [])]
+
     def clean(self, text):
         # Drop "== Heading ==" lines so they can't get glued into sentences.
         text = re.sub(r"^\s*=+.*?=+\s*$", " ", text, flags=re.M)
@@ -115,6 +234,13 @@ class MediaWikiSource(Source):
 
 class WikipediaSource(MediaWikiSource):
     pass
+
+
+class WikibooksSource(MediaWikiSource):
+    host = "en.wikibooks.org"
+    name = "Wikibooks"
+    trust = 0.9
+    intro_only = False       # book landing pages are tables of contents
 
 
 class WikiversitySource(MediaWikiSource):

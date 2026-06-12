@@ -27,7 +27,7 @@ _DEFINITION_OPENER = re.compile(
 )
 
 
-def _jaccard(a, b):
+def jaccard(a, b):
     set_a, set_b = set(a), set(b)
     if not set_a or not set_b:
         return 0.0
@@ -37,7 +37,7 @@ def _jaccard(a, b):
 def _dedupe(sentences):
     kept = []
     for sentence in sentences:
-        if any(_jaccard(sentence.tokens, k.tokens) > JACCARD_DUPLICATE for k in kept):
+        if any(jaccard(sentence.tokens, k.tokens) > JACCARD_DUPLICATE for k in kept):
             continue
         kept.append(sentence)
     return kept

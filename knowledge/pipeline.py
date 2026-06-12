@@ -4,6 +4,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 
+from . import curriculum
 from .cache import TTLCache
 from .query import analyze
 from .ranking import rank
@@ -74,6 +75,20 @@ def answer(question):
         return cached
 
     query = analyze(question)
+
+    # Curriculum questions get the specialist path: deterministic lookups of
+    # course/outline pages and cross-source topic aggregation.
+    if query.is_curriculum and query.subject:
+        try:
+            result = curriculum.answer_curriculum(query)
+        except Exception:
+            log.warning("curriculum path failed", exc_info=True)
+            result = None
+        if result is not None:
+            result["question"] = query.raw
+            _cache.set(key, result)
+            return result
+
     # If a search-term variant finds nothing, relax: full keyword bag, then
     # the bare topic phrase. Stops at the first variant that yields an answer.
     variants = [query.search_terms, " ".join(query.keywords), query.topic]

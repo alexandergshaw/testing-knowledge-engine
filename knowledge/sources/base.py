@@ -2,6 +2,8 @@
 in a new module and add an instance in pipeline.select_sources()."""
 
 import re
+import threading
+import time
 from dataclasses import dataclass
 from html import unescape
 
@@ -9,6 +11,23 @@ import requests
 
 USER_AGENT = "KnowledgeEngine/1.0 (educational demo; no-LLM retrieval engine)"
 REQUEST_TIMEOUT = 6
+MAX_RETRY_AFTER_SECONDS = 5
+MIN_REQUEST_INTERVAL = 0.15  # global politeness throttle across all sources
+
+# Shared keep-alive session: fewer connections is both faster and politer to
+# the public APIs.
+_session = requests.Session()
+_throttle_lock = threading.Lock()
+_last_request_time = 0.0
+
+
+def _throttle():
+    global _last_request_time
+    with _throttle_lock:
+        wait = _last_request_time + MIN_REQUEST_INTERVAL - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        _last_request_time = time.monotonic()
 
 
 @dataclass
@@ -29,14 +48,23 @@ class Source:
         raise NotImplementedError
 
     def get(self, url, params):
-        response = requests.get(
-            url,
-            params=params,
-            headers={"User-Agent": USER_AGENT},
-            timeout=REQUEST_TIMEOUT,
-        )
-        response.raise_for_status()
-        return response.json()
+        for attempt in (1, 2):
+            _throttle()
+            response = _session.get(
+                url,
+                params=params,
+                headers={"User-Agent": USER_AGENT},
+                timeout=REQUEST_TIMEOUT,
+            )
+            if response.status_code == 429 and attempt == 1:
+                try:
+                    delay = float(response.headers.get("Retry-After", 2))
+                except ValueError:
+                    delay = 2.0
+                time.sleep(min(delay, MAX_RETRY_AFTER_SECONDS))
+                continue
+            response.raise_for_status()
+            return response.json()
 
 
 def strip_html(html):

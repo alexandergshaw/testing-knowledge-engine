@@ -1,104 +1,104 @@
-const chat = document.getElementById("chat");
-const form = document.getElementById("ask-form");
-const input = document.getElementById("question");
-const sendButton = document.getElementById("send");
+const form = document.getElementById("schedule-form");
+const descriptionInput = document.getElementById("description");
+const weeksInput = document.getElementById("weeks");
+const generateButton = document.getElementById("generate");
+const resultSection = document.getElementById("result");
+const subjectHeading = document.getElementById("result-subject");
+const confidenceBadge = document.getElementById("result-confidence");
+const weekList = document.getElementById("week-list");
+const citationsBox = document.getElementById("citations");
+const status = document.getElementById("status");
 
-function addMessage(className, node) {
-  const message = document.createElement("div");
-  message.className = `message ${className}`;
-  if (typeof node === "string") {
-    message.textContent = node;
-  } else {
-    message.appendChild(node);
-  }
-  chat.appendChild(message);
-  chat.scrollTop = chat.scrollHeight;
-  return message;
+function showStatus(message, kind) {
+  status.textContent = message;
+  status.className = `status ${kind || ""}`;
+  status.hidden = false;
 }
 
-// Render answer text, converting [n] markers into superscript citation links.
-function renderAnswer(data) {
-  const container = document.createDocumentFragment();
+function hideStatus() {
+  status.hidden = true;
+}
 
-  data.answer.split("\n\n").forEach((paragraphText) => {
-    const paragraph = document.createElement("p");
-    const parts = paragraphText.split(/(\[\d+\])/g);
-    parts.forEach((part) => {
-      const marker = part.match(/^\[(\d+)\]$/);
-      const citation = marker && data.citations[Number(marker[1]) - 1];
-      if (citation) {
-        const sup = document.createElement("sup");
-        const link = document.createElement("a");
-        link.href = citation.url;
-        link.target = "_blank";
-        link.rel = "noopener";
-        link.title = `${citation.title} — ${citation.source}`;
-        link.textContent = `[${marker[1]}]`;
-        sup.appendChild(link);
-        paragraph.appendChild(sup);
-      } else if (part) {
-        paragraph.appendChild(document.createTextNode(part));
-      }
+function renderSchedule(data) {
+  subjectHeading.textContent = `${data.subject} — weekly schedule`;
+  confidenceBadge.textContent = `confidence: ${data.confidence}`;
+  confidenceBadge.className = `confidence ${data.confidence}`;
+
+  weekList.replaceChildren();
+  data.weeks.forEach((week) => {
+    const item = document.createElement("li");
+
+    const number = document.createElement("span");
+    number.className = "week-num";
+    number.textContent = `Week ${week.week}`;
+    item.appendChild(number);
+
+    const topics = document.createElement("span");
+    topics.className = "week-topics";
+    week.topics.forEach((topic, index) => {
+      if (index > 0) topics.appendChild(document.createTextNode("; "));
+      const isExtra = /\((continued)\)$|^Midterm review|^Review and final/.test(topic);
+      const node = document.createElement(isExtra ? "span" : "strong");
+      if (isExtra) node.className = "extra";
+      node.textContent = topic;
+      topics.appendChild(node);
     });
-    container.appendChild(paragraph);
+    item.appendChild(topics);
+    weekList.appendChild(item);
   });
 
+  citationsBox.replaceChildren();
   if (data.citations.length) {
-    const citations = document.createElement("div");
-    citations.className = "citations";
-    data.citations.forEach((citation, index) => {
+    const heading = document.createElement("strong");
+    heading.textContent = "Built from:";
+    citationsBox.appendChild(heading);
+    data.citations.forEach((citation) => {
       const row = document.createElement("div");
       const link = document.createElement("a");
       link.href = citation.url;
       link.target = "_blank";
       link.rel = "noopener";
-      link.textContent = `[${index + 1}] ${citation.title}`;
+      link.textContent = citation.title;
       row.appendChild(link);
       const source = document.createElement("span");
       source.className = "src";
       source.textContent = ` — ${citation.source}`;
       row.appendChild(source);
-      citations.appendChild(row);
+      citationsBox.appendChild(row);
     });
-    container.appendChild(citations);
   }
 
-  if (data.confidence && data.confidence !== "none") {
-    const badge = document.createElement("span");
-    badge.className = `confidence ${data.confidence}`;
-    badge.textContent = `confidence: ${data.confidence}`;
-    container.appendChild(badge);
-  }
-
-  return container;
+  resultSection.hidden = false;
 }
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const question = input.value.trim();
-  if (!question) return;
+  const description = descriptionInput.value.trim();
+  const weeks = Number(weeksInput.value);
+  if (!description) return;
 
-  addMessage("question", question);
-  input.value = "";
-  sendButton.disabled = true;
-  const loading = addMessage("answer loading", "Researching sources");
+  generateButton.disabled = true;
+  resultSection.hidden = true;
+  showStatus("Researching published curricula", "loading");
 
   try {
-    const response = await fetch(`/api/ask?q=${encodeURIComponent(question)}`);
+    const response = await fetch("/api/schedule", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description, weeks }),
+    });
     const data = await response.json();
-    loading.remove();
     if (!response.ok || data.error) {
-      addMessage("answer", data.error || "Something went wrong.");
+      showStatus(data.error || "Something went wrong.", "error");
     } else {
-      addMessage("answer", renderAnswer(data));
+      hideStatus();
+      renderSchedule(data);
     }
   } catch (error) {
-    loading.remove();
-    addMessage("answer", "Network error — is the server running?");
+    showStatus("Network error — is the server running?", "error");
   } finally {
-    sendButton.disabled = false;
-    input.focus();
+    generateButton.disabled = false;
   }
 });
 
-input.focus();
+descriptionInput.focus();

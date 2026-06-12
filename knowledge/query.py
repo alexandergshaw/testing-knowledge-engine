@@ -43,6 +43,74 @@ EDUCATION_TERMS = frozenset(
     students textbook beginner beginners introductory bootcamp""".split()
 )
 
+# Qualifiers that describe a course's level/importance, not its subject.
+LEVEL_TERMS = frozenset(
+    """college university school high undergraduate graduate beginner
+    beginners introductory intro foundational core essential key main basic
+    basics fundamental advanced""".split()
+)
+
+# Canonical subject names for deterministic curriculum lookups. Multi-word
+# phrases are checked against the raw question; single tokens against tokens.
+SUBJECT_PHRASES = {
+    "cyber security": "Computer security",
+    "cybersecurity": "Computer security",
+    "computer security": "Computer security",
+    "information security": "Computer security",
+    "object oriented programming": "Object-oriented programming",
+    "object-oriented programming": "Object-oriented programming",
+    "computer programming": "Computer programming",
+    "machine learning": "Machine learning",
+    "data science": "Data science",
+    "web development": "Web development",
+    "web design": "Web design",
+    "computer science": "Computer science",
+    "artificial intelligence": "Artificial intelligence",
+    "data structures": "Data structures",
+    "operating systems": "Operating systems",
+}
+# Subjects whose own name has no curriculum page, but whose parent field
+# does. Keyed by lowercase subject; value is the field whose curriculum to
+# fetch alongside.
+RELATED_CURRICULUM = {
+    "ethical hacking": "Computer security",
+    "hacking": "Computer security",
+    "penetration testing": "Computer security",
+    "network security": "Computer security",
+    "digital forensics": "Computer security",
+}
+
+# Academic fields with Wikiversity/Wikipedia-outline coverage.
+FIELD_SUBJECTS = {
+    name: name.capitalize()
+    for name in """psychology sociology history biology chemistry physics
+    economics philosophy statistics calculus algebra anthropology astronomy
+    geology geography accounting marketing finance microbiology genetics
+    linguistics nutrition ethics logic botany ecology zoology literature
+    music""".split()
+}
+SUBJECT_ALIASES = {
+    "python": "Python",
+    "java": "Java",
+    "javascript": "JavaScript",
+    "js": "JavaScript",
+    "typescript": "TypeScript",
+    "c++": "C++",
+    "cpp": "C++",
+    "c#": "C Sharp",
+    "csharp": "C Sharp",
+    "go": "Go",
+    "golang": "Go",
+    "ruby": "Ruby",
+    "php": "PHP",
+    "rust": "Rust",
+    "swift": "Swift",
+    "kotlin": "Kotlin",
+    "sql": "SQL",
+    "html": "HTML",
+    "css": "CSS",
+}
+
 _PREFIX_PATTERNS = [
     r"^(what|who)\s+(is|are|was|were)\s+(a|an|the)?\s*",
     r"^what\s+does\s+",
@@ -87,6 +155,8 @@ class AnalyzedQuery:
     qtype: str = "generic"          # definition | howto | why | person | list | generic
     is_programming: bool = False
     is_education: bool = False
+    is_curriculum: bool = False     # "what topics does a X course cover"-shaped
+    subject: str = ""               # canonical course subject, e.g. "Python"
     search_terms: str = ""          # what actually gets sent to source APIs
 
 
@@ -96,13 +166,19 @@ def tokenize(text):
 
 def stem(token):
     """Tiny suffix-stripping stemmer, enough to align question and source
-    vocabulary for BM25. Deliberately conservative."""
-    for suffix in ("ingly", "edly", "ing", "ies", "ied", "ed", "ly", "es", "s"):
+    vocabulary for BM25. Deliberately conservative. The plural rules must be
+    consistent with their singulars: "files" -> "file" (not "fil") so it
+    matches "file"; "classes" -> "class"."""
+    for suffix in ("ingly", "edly", "ing", "ies", "ied", "ed", "ly"):
         if token.endswith(suffix) and len(token) - len(suffix) >= 3:
             base = token[: -len(suffix)]
-            if suffix == "ies" or suffix == "ied":
+            if suffix in ("ies", "ied"):
                 return base + "y"
             return base
+    if token.endswith(("xes", "zes", "ches", "shes", "sses")) and len(token) >= 5:
+        return token[:-2]
+    if token.endswith("s") and not token.endswith(("ss", "us", "is")) and len(token) >= 4:
+        return token[:-1]
     return token
 
 
@@ -111,9 +187,20 @@ def content_tokens(text):
     return [stem(t) for t in tokenize(text) if t not in STOPWORDS]
 
 
+_LIST_NOUNS = r"(topics?|concepts?|subjects?|skills?|areas?|fundamentals|basics)"
+_LIST_PATTERNS = [
+    # list-noun anywhere near the start of a what/which question — catches
+    # "what are the foundational topics ...", not just "what topics ..."
+    rf"^(what|which)\b.{{0,40}}\b{_LIST_NOUNS}\b",
+    r"^what\s+(should|needs?\s+to|must|has\s+to)\s+be\s+(taught|covered|included)",
+    r"\b(syllabus|curriculum)\s+(for|of)\b",
+    r"^what\s+(do|does|should|would)\b.*\b(course|class|curriculum)\b.*\bcover",
+]
+
+
 def classify(question):
     q = question.lower().strip()
-    if re.search(r"^(what|which)\s+(topics|concepts|subjects|skills|areas)\b", q) or "list of" in q:
+    if any(re.search(p, q) for p in _LIST_PATTERNS) or "list of" in q:
         return "list"
     if re.search(r"^(what\s+(is|are|was|were)|define|definition\s+of|meaning\s+of)\b", q) or re.search(
         r"^what\s+does\b.*\bmean", q
@@ -140,6 +227,27 @@ def extract_topic(question):
     return topic.strip() or question.strip().rstrip("?!. ")
 
 
+def extract_subject(question, keywords):
+    """Canonical course subject: known multi-word phrases first, then known
+    single-token names, then whatever substantive keywords remain."""
+    q = question.lower()
+    for phrase, canonical in SUBJECT_PHRASES.items():
+        if phrase in q:
+            return canonical
+    for token in tokenize(question):
+        if token in SUBJECT_ALIASES:
+            return SUBJECT_ALIASES[token]
+    leftovers = [
+        k
+        for k in keywords
+        if k not in VAGUE_WORDS
+        and k not in META_WORDS
+        and k not in EDUCATION_TERMS
+        and k not in LEVEL_TERMS
+    ]
+    return " ".join(leftovers[:3]).capitalize() if leftovers else ""
+
+
 def analyze(question):
     qtype = classify(question)
     topic = extract_topic(question)
@@ -157,6 +265,8 @@ def analyze(question):
         _CODE_PATTERN.search(question)
     )
     is_education = bool(tokens & EDUCATION_TERMS)
+    is_curriculum = qtype == "list" and is_education
+    subject = extract_subject(question, keywords) if is_curriculum else ""
 
     # Sources get a focused keyword query, not the raw question — long
     # natural-language strings derail keyword-based search APIs. A cleanly
@@ -179,5 +289,7 @@ def analyze(question):
         qtype=qtype,
         is_programming=is_programming,
         is_education=is_education,
+        is_curriculum=is_curriculum,
+        subject=subject,
         search_terms=search_terms,
     )
