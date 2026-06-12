@@ -80,10 +80,20 @@ directory, no config. The Framework Preset in Project → Settings should show
 No timeout config is needed either: source fetching is capped at 10s
 internally, well under Vercel's default function duration.
 
+Two Vercel-specific rules this repo follows:
+
+- Static assets live in `public/**` — served by Vercel's CDN. Per Vercel's
+  docs, Flask's `static_folder` must NOT be relied on in production: `public/`
+  is not bundled into the function. Locally Flask serves the same folder; in
+  production the `/` route falls back to redirecting to `/index.html`, which
+  the CDN serves.
+- Native Flask detection requires **Vercel CLI ≥ 48.2.10** (`npm i -g
+  vercel@latest`). Older CLIs won't recognize the app and everything 404s.
+
 Deploy with the CLI, or just import the repo at vercel.com:
 
 ```sh
-npm i -g vercel
+npm i -g vercel@latest
 vercel          # preview deploy
 vercel --prod   # production
 ```

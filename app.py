@@ -1,12 +1,15 @@
 import logging
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, redirect, request
+from werkzeug.exceptions import NotFound
 
 from knowledge import pipeline
 
 logging.basicConfig(level=logging.INFO)
 
-# "public" is served by Vercel's CDN in production; Flask serves it in local dev.
+# In local dev Flask serves the UI from public/. On Vercel, public/** is
+# served by the CDN and is NOT bundled into the function, so static_folder
+# lookups fail there — routes must fall back to the CDN paths instead.
 app = Flask(__name__, static_folder="public", static_url_path="")
 
 MAX_QUESTION_LENGTH = 300
@@ -14,7 +17,10 @@ MAX_QUESTION_LENGTH = 300
 
 @app.route("/")
 def index():
-    return app.send_static_file("index.html")
+    try:
+        return app.send_static_file("index.html")
+    except NotFound:
+        return redirect("/index.html", code=307)
 
 
 @app.route("/api/ask")
