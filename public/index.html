@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Knowledge Engine</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="app">
+    <header class="header">
+      <h1>Knowledge Engine</h1>
+      <p class="tagline">Answers synthesized from trusted sources — no AI, just algorithms.</p>
+    </header>
+
+    <section id="chat" class="chat" aria-live="polite">
+      <div class="message answer welcome">
+        <p>Ask me anything — programming, psychology, history, science, and more.
+           I research trusted sources and synthesize an answer with citations.</p>
+      </div>
+    </section>
+
+    <form id="ask-form" class="ask-form" autocomplete="off">
+      <input id="question" type="text" maxlength="300"
+             placeholder="e.g. What is cognitive dissonance?" required>
+      <button type="submit" id="send">Ask</button>
+    </form>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
