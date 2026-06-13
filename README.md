@@ -72,13 +72,30 @@ python app.py            # dev server on http://localhost:5050 (or set PORT)
 
 ## API
 
+The HTTP surface ([service.py](service.py)) is versioned under `/api/v1`; the
+domain logic stays in `knowledge/`. A self-describing OpenAPI spec is served at
+`/api/v1/openapi.json`, and the bundled UI includes an API console for testing.
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| GET | `/api/v1/health` | no | liveness/version |
+| GET | `/api/v1/openapi.json` | no | OpenAPI 3.1 contract |
+| POST | `/api/v1/schedule` | yes* | course description → weekly schedule (JSON) |
+| POST | `/api/v1/materials` | yes* | project zip → materials zip (`application/zip`) |
+
+The unversioned `/api/schedule` and `/api/materials` remain as deprecated
+aliases. \*Auth is **optional**: required only when the `API_KEY` env var is
+set (see below).
+
 ```sh
-curl -X POST http://localhost:5050/api/schedule \
+curl -X POST http://localhost:5050/api/v1/schedule \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
   -d '{"description": "An introductory college course in Python programming, covering variables, functions, and object-oriented programming.", "weeks": 14}'
 ```
 
-Response shape:
+Success returns the resource directly (schedule JSON, or the binary zip for
+materials):
 
 ```json
 {
@@ -89,6 +106,23 @@ Response shape:
   "citations": [{"title": "Python Programming", "url": "...", "source": "Wikiversity"}]
 }
 ```
+
+Errors always use one envelope, with the matching HTTP status:
+
+```json
+{"error": {"code": "invalid_request", "message": "Please provide a course description."}}
+```
+
+### Configuration (env vars)
+
+| Var | Effect |
+|---|---|
+| `API_KEY` | If set, protected endpoints require it via `X-API-Key` (or `Authorization: Bearer`). If unset, the API is open — convenient for local dev. |
+| `CORS_ORIGINS` | Allowed origins, comma-separated. Default `*`. When a list is given, only matching `Origin`s are echoed back. |
+| `PORT` | Local dev port (default 5050). |
+
+CORS is enabled (cross-origin clients are supported); the API key travels in a
+header, never a cookie.
 
 ## Tests
 
@@ -120,6 +154,16 @@ npm i -g vercel@latest
 vercel          # preview deploy
 vercel --prod   # production
 ```
+
+Set `API_KEY` (and optionally `CORS_ORIGINS`) under Project → Settings →
+Environment Variables to lock down the deployed API. Two further caveats:
+Vercel caps request bodies around **4.5 MB**, so large project zips that work
+locally may fail `POST /api/v1/materials` on the deployed function (slim the
+zip, or move to a direct-to-blob upload); and because each serverless instance
+is independent, true global rate limiting needs an external store (e.g. Vercel
+KV) — the API key is the abuse gate, with a per-instance outbound throttle in
+[knowledge/sources/base.py](knowledge/sources/base.py) protecting the upstream
+APIs.
 
 ## Under the hood
 

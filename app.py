@@ -1,11 +1,9 @@
-import io
 import logging
 
-from flask import Flask, jsonify, redirect, request, send_file
+from flask import Flask, redirect, request
 from werkzeug.exceptions import NotFound
 
-from knowledge import schedule
-from knowledge.materials import MaterialsError, build_materials
+from service import MAX_UPLOAD_BYTES, allowed_origin, api, error_response
 
 logging.basicConfig(level=logging.INFO)
 
@@ -13,11 +11,8 @@ logging.basicConfig(level=logging.INFO)
 # served by the CDN and is NOT bundled into the function, so static_folder
 # lookups fail there — routes must fall back to the CDN paths instead.
 app = Flask(__name__, static_folder="public", static_url_path="")
-
-MAX_DESCRIPTION_LENGTH = 5000
-MIN_DESCRIPTION_LENGTH = 15
-MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES + 1024 * 1024
+app.register_blueprint(api)
 
 
 @app.route("/")
@@ -28,59 +23,46 @@ def index():
         return redirect("/index.html", code=307)
 
 
-@app.route("/api/schedule", methods=["POST"])
-def make_schedule():
-    data = request.get_json(silent=True) or {}
-    description = (data.get("description") or "").strip()
-    weeks = data.get("weeks")
-
-    if len(description) < MIN_DESCRIPTION_LENGTH:
-        return jsonify({"error": "Please provide a course description."}), 400
-    if len(description) > MAX_DESCRIPTION_LENGTH:
-        return jsonify(
-            {"error": f"Description too long (max {MAX_DESCRIPTION_LENGTH} chars)."}
-        ), 400
-    try:
-        weeks = int(weeks)
-    except (TypeError, ValueError):
-        return jsonify({"error": "Number of weeks must be a whole number."}), 400
-    if not schedule.MIN_WEEKS <= weeks <= schedule.MAX_WEEKS:
-        return jsonify(
-            {"error": f"Weeks must be between {schedule.MIN_WEEKS} and {schedule.MAX_WEEKS}."}
-        ), 400
-
-    try:
-        result = schedule.build_schedule(description, weeks)
-    except Exception:
-        app.logger.exception("schedule failure")
-        return jsonify({"error": "Something went wrong while building the schedule."}), 500
-    if "error" in result:
-        return jsonify(result), 422
-    return jsonify(result)
-
-
-@app.route("/api/materials", methods=["POST"])
-def make_materials():
-    upload = request.files.get("project")
-    if upload is None or not upload.filename:
-        return jsonify({"error": "Upload the generated project as a .zip file."}), 400
-    data = upload.read()
-    if len(data) > MAX_UPLOAD_BYTES:
-        return jsonify({"error": "Zip too large (max 20 MB)."}), 413
-    try:
-        payload, summary = build_materials(data)
-    except MaterialsError as error:
-        return jsonify({"error": str(error)}), 422
-    except Exception:
-        app.logger.exception("materials generation failed")
-        return jsonify({"error": "Something went wrong while generating materials."}), 500
-    app.logger.info("materials generated: %s units", summary["units"])
-    return send_file(
-        io.BytesIO(payload),
-        mimetype="application/zip",
-        as_attachment=True,
-        download_name="course-materials.zip",
+@app.after_request
+def add_cors_headers(response):
+    """API consumers may call from other origins; the bundled UI is same-origin
+    so this is harmless for it. Key travels in a header (not a cookie), so a
+    wildcard origin is safe."""
+    response.headers["Access-Control-Allow-Origin"] = allowed_origin(
+        request.headers.get("Origin", "")
     )
+    response.headers["Access-Control-Allow-Headers"] = (
+        "Content-Type, X-API-Key, Authorization"
+    )
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Vary"] = "Origin"
+    return response
+
+
+# An API should answer with JSON even for framework-level errors, not Flask's
+# default HTML pages.
+@app.errorhandler(404)
+def handle_404(error):
+    return error_response("not_found", "Resource not found.", 404)
+
+
+@app.errorhandler(405)
+def handle_405(error):
+    return error_response("method_not_allowed", "Method not allowed for this endpoint.", 405)
+
+
+@app.errorhandler(413)
+def handle_413(error):
+    return error_response(
+        "payload_too_large",
+        f"Upload too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB).",
+        413,
+    )
+
+
+@app.errorhandler(500)
+def handle_500(error):
+    return error_response("internal_error", "Something went wrong.", 500)
 
 
 if __name__ == "__main__":

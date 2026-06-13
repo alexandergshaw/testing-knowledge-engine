@@ -266,6 +266,67 @@ label {
 
 .materials .status { margin-top: 0.75rem; }
 
+/* API console */
+.api-console label { margin-top: 0.4rem; }
+.muted-note { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--muted); }
+
+#api-key,
+#console-endpoint {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--panel-2);
+  border-radius: 10px;
+  color: var(--text);
+  padding: 0.6rem 0.8rem;
+  font-size: 0.95rem;
+  outline: none;
+}
+#api-key:focus,
+#console-endpoint:focus { border-color: var(--accent); }
+
+.console-row { align-items: stretch; }
+.console-row #console-endpoint { flex: 1; }
+
+#console-send {
+  background: var(--accent);
+  border: none;
+  border-radius: 10px;
+  color: #fff;
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 0.6rem 1.3rem;
+  cursor: pointer;
+}
+#console-send:disabled { opacity: 0.5; cursor: wait; }
+
+#console-body,
+#console-curl,
+#console-response {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--panel-2);
+  border-radius: 10px;
+  color: var(--text);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  padding: 0.7rem 0.9rem;
+  resize: vertical;
+  outline: none;
+}
+#console-body:focus { border-color: var(--accent); }
+
+.console-meta {
+  display: flex;
+  justify-content: space-between;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.9rem;
+  margin: 0.5rem 0;
+}
+.console-meta .ok { color: var(--accent-2); font-weight: 600; }
+.console-meta .err { color: var(--warn); font-weight: 600; }
+.console-meta #console-timing { color: var(--muted); }
+
 .status {
   margin: 0;
   padding: 0.85rem 1.1rem;

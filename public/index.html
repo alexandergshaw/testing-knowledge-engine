@@ -63,6 +63,42 @@
       <p id="materials-status" class="status" hidden></p>
     </section>
 
+    <section class="panel api-console">
+      <h2 class="materials-title">API console</h2>
+      <p class="materials-hint">Test the live API directly. Calls include your API key
+        when set. Full contract:
+        <a href="/api/v1/openapi.json" target="_blank" rel="noopener">/api/v1/openapi.json</a>.</p>
+
+      <label for="api-key">API key
+        <span class="muted-note">— only needed if the deployment sets one; saved in this browser</span>
+      </label>
+      <input id="api-key" type="password" autocomplete="off"
+        placeholder="X-API-Key — leave blank for local / open deployments">
+
+      <div class="form-row console-row">
+        <select id="console-endpoint" aria-label="Endpoint"></select>
+        <button type="button" id="console-send">Send</button>
+      </div>
+
+      <label for="console-body" id="console-body-label">Request body (JSON)</label>
+      <textarea id="console-body" rows="6" spellcheck="false"></textarea>
+
+      <div id="console-file-row" class="form-row" hidden>
+        <input id="console-file" type="file" accept=".zip,application/zip">
+      </div>
+
+      <div id="console-output" hidden>
+        <div class="console-meta">
+          <span id="console-status"></span>
+          <span id="console-timing"></span>
+        </div>
+        <label for="console-curl">Equivalent curl</label>
+        <textarea id="console-curl" rows="4" readonly spellcheck="false"></textarea>
+        <label for="console-response">Response</label>
+        <textarea id="console-response" rows="12" readonly spellcheck="false"></textarea>
+      </div>
+    </section>
+
     <p id="status" class="status" hidden></p>
   </main>
   <script src="app.js"></script>
