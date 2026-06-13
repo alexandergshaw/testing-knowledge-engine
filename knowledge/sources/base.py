@@ -4,7 +4,7 @@ in a new module and add an instance in pipeline.select_sources()."""
 import re
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from html import unescape
 
 import requests
@@ -37,6 +37,7 @@ class Passage:
     url: str
     source: str       # human-readable source name, e.g. "Wikipedia"
     trust: float      # multiplier applied to BM25 scores for this source
+    code: list = field(default_factory=list)  # verbatim code blocks, for examples
 
 
 class Source:

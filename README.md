@@ -37,6 +37,35 @@ Results are cached in memory for an hour. Confidence is "high" when 2+
 independent sources corroborate the curriculum, "medium" for one, "low" when
 the schedule comes only from the description itself.
 
+## Module lecture generator
+
+Paste a module's learning objectives — in **any format** (a list, or prose like
+"students will be able to define X, explain Y…") — and get a PowerPoint where,
+for each objective, there's an explanation slide plus worked-example slide(s),
+with talking points and source citations in the speaker notes. Zero AI: every
+slide is extracted from cited sources.
+
+`knowledge/lecture.py`:
+- `parse_objectives` is format-agnostic (inline numbered/bulleted lists, lead-in
+  prose, run-on action-verb sentences, or a single objective).
+- Each objective drives one retrieval (reusing the engine's
+  `select_sources`/`fetch` → BM25 `rank` → extractive `synthesize`) for the
+  explanation, plus `extract_examples` for worked examples — Stack Overflow code
+  snippets for programming topics, "for example…" sentences otherwise.
+- The module title biases each objective's search toward the module's domain, so
+  "for loop" in an *Intro to Python* module resolves to the programming sense.
+
+As with everything here, quality is bounded by what the sources provide:
+well-documented objectives yield rich slides; obscure ones get a thinner slide
+flagged low-confidence in the notes. Nothing is fabricated.
+
+```sh
+curl -X POST http://localhost:5050/api/v1/lecture \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Intro to Python", "objectives": "Students will be able to define variables, explain control flow, and write functions."}' \
+  --output module-lecture.pptx
+```
+
 ## Course materials generator
 
 After Copilot generates the project repository from the prompt, upload its zip
@@ -81,6 +110,7 @@ domain logic stays in `knowledge/`. A self-describing OpenAPI spec is served at
 | GET | `/api/v1/health` | no | liveness/version |
 | GET | `/api/v1/openapi.json` | no | OpenAPI 3.1 contract |
 | POST | `/api/v1/schedule` | yes* | course description → weekly schedule (JSON) |
+| POST | `/api/v1/lecture` | yes* | module objectives → PowerPoint lecture (`.pptx`) |
 | POST | `/api/v1/materials` | yes* | project zip → materials zip (`application/zip`) |
 
 The unversioned `/api/schedule` and `/api/materials` remain as deprecated

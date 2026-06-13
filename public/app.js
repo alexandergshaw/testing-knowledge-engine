@@ -244,6 +244,60 @@ form.addEventListener("submit", async (event) => {
 
 descriptionInput.focus();
 
+// --- Module lecture generator ------------------------------------------------
+const lectureForm = document.getElementById("lecture-form");
+const lectureTitle = document.getElementById("lecture-title");
+const lectureObjectives = document.getElementById("lecture-objectives");
+const lectureButton = document.getElementById("lecture-generate");
+const lectureStatus = document.getElementById("lecture-status");
+
+function showLectureStatus(message, kind) {
+  lectureStatus.textContent = message;
+  lectureStatus.className = `status ${kind || ""}`;
+  lectureStatus.hidden = false;
+}
+
+lectureForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const objectives = lectureObjectives.value.trim();
+  if (!objectives) return;
+
+  lectureButton.disabled = true;
+  showLectureStatus("Researching sources and building slides", "loading");
+
+  try {
+    const response = await fetch("/api/v1/lecture", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ objectives, title: lectureTitle.value.trim() }),
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      showLectureStatus(errorMessage(data), "error");
+      return;
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "module-lecture.pptx";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showLectureStatus(
+      "Done — module-lecture.pptx downloaded (one explanation + example slides per objective).",
+      ""
+    );
+  } catch (error) {
+    showLectureStatus("Network error — is the server running?", "error");
+  } finally {
+    lectureButton.disabled = false;
+  }
+});
+
 // --- API console -------------------------------------------------------------
 const apiKeyField = document.getElementById("api-key");
 apiKeyField.value = localStorage.getItem(API_KEY_STORE) || "";

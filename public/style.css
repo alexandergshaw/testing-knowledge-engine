@@ -266,6 +266,37 @@ label {
 
 .materials .status { margin-top: 0.75rem; }
 
+/* Module lecture generator */
+#lecture-title,
+#lecture-objectives {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--panel-2);
+  border-radius: 10px;
+  color: var(--text);
+  padding: 0.7rem 0.9rem;
+  font-size: 1rem;
+  font-family: inherit;
+  outline: none;
+}
+#lecture-objectives { line-height: 1.5; resize: vertical; }
+#lecture-title:focus,
+#lecture-objectives:focus { border-color: var(--accent); }
+
+#lecture-generate {
+  margin-left: auto;
+  background: var(--accent);
+  border: none;
+  border-radius: 10px;
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 600;
+  padding: 0.7rem 1.4rem;
+  cursor: pointer;
+}
+#lecture-generate:disabled { opacity: 0.5; cursor: wait; }
+.lecture .status { margin-top: 0.75rem; }
+
 /* API console */
 .api-console label { margin-top: 0.4rem; }
 .muted-note { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--muted); }

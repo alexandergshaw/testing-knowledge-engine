@@ -22,6 +22,9 @@ from docx.shared import Pt as DocxPt
 from pptx import Presentation
 from pptx.util import Inches, Pt
 
+from .slides import add_bullet_slide as _add_bullet_slide
+from .slides import add_code_box as _add_code_box
+
 MAX_ZIP_ENTRIES = 2000
 MAX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
 SKIP_PARTS = {"__pycache__", "node_modules", ".git", ".next", "app", "solutions"}
@@ -314,34 +317,6 @@ def parse_project(zip_bytes):
 
 # ---------------------------------------------------------------------------
 # Generators
-
-
-def _add_bullet_slide(deck, heading, bullets, sub_bullets=None):
-    slide = deck.slides.add_slide(deck.slide_layouts[1])
-    slide.shapes.title.text = heading
-    body = slide.placeholders[1].text_frame
-    body.clear()
-    for index, bullet in enumerate(bullets):
-        paragraph = body.paragraphs[0] if index == 0 else body.add_paragraph()
-        paragraph.text = bullet
-        paragraph.font.size = Pt(20)
-    for sub in sub_bullets or []:
-        paragraph = body.add_paragraph()
-        paragraph.text = sub
-        paragraph.level = 1
-        paragraph.font.size = Pt(16)
-    return slide
-
-
-def _add_code_box(slide, lines):
-    box = slide.shapes.add_textbox(Inches(0.7), Inches(3.4), Inches(8.6), Inches(3.4))
-    frame = box.text_frame
-    frame.word_wrap = True
-    for index, line in enumerate(lines):
-        paragraph = frame.paragraphs[0] if index == 0 else frame.add_paragraph()
-        paragraph.text = line
-        paragraph.font.name = "Consolas"
-        paragraph.font.size = Pt(14)
 
 
 def build_lecture(unit):

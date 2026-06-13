@@ -1,11 +1,31 @@
 """Stack Exchange adapter via the keyless API quota — works for any SE site
 (Stack Overflow, CS Educators, Software Engineering, ...)."""
 
+import re
+from html import unescape
+
 from .base import Passage, Source, strip_html
 
 API = "https://api.stackexchange.com/2.3"
 MAX_ANSWER_CHARS = 2000
 QUESTION_LIMIT = 2
+MAX_CODE_BLOCKS = 3
+
+_PRE_BLOCK = re.compile(r"<pre[^>]*>(.*?)</pre>", re.S)
+_TAGS = re.compile(r"<[^>]+>")
+
+
+def extract_code_blocks(body):
+    """Verbatim code from an answer's <pre> blocks — these are dropped from the
+    prose text by strip_html, but they're exactly what makes a worked example."""
+    blocks = []
+    for match in _PRE_BLOCK.findall(body):
+        code = unescape(_TAGS.sub("", match)).strip("\n")
+        if code.strip():
+            blocks.append(code)
+        if len(blocks) >= MAX_CODE_BLOCKS:
+            break
+    return blocks
 
 
 class StackExchangeSource(Source):
@@ -49,7 +69,8 @@ class StackExchangeSource(Source):
         passages = []
         for question_id, answer in best.items():
             question = questions[question_id]
-            text = strip_html(answer.get("body", ""))
+            body = answer.get("body", "")
+            text = strip_html(body)
             if len(text) < 40:
                 continue
             passages.append(
@@ -59,6 +80,7 @@ class StackExchangeSource(Source):
                     url=question.get("link", ""),
                     source=self.name,
                     trust=self.trust,
+                    code=extract_code_blocks(body),
                 )
             )
         return passages

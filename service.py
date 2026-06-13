@@ -14,12 +14,18 @@ from functools import wraps
 from flask import Blueprint, current_app, jsonify, request, send_file
 
 from knowledge import schedule
+from knowledge.lecture import LectureError, build_lecture_deck
 from knowledge.materials import MaterialsError, build_materials
 
 API_VERSION = "1.0.0"
 MIN_DESCRIPTION_LENGTH = 15
 MAX_DESCRIPTION_LENGTH = 5000
+MIN_OBJECTIVES_LENGTH = 10
+MAX_OBJECTIVES_LENGTH = 4000
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+PPTX_MIMETYPE = (
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+)
 
 api = Blueprint("api", __name__)
 
@@ -78,6 +84,14 @@ SCHEDULE_EXAMPLE = {
     "weeks": 14,
 }
 
+LECTURE_EXAMPLE = {
+    "title": "Introduction to Python",
+    "objectives": (
+        "By the end of this module, students will be able to define variables, "
+        "explain control flow, and write functions."
+    ),
+}
+
 OPENAPI_SPEC = {
     "openapi": "3.1.0",
     "info": {
@@ -130,6 +144,40 @@ OPENAPI_SPEC = {
                     "200": {"description": "Weekly schedule"},
                     "400": {"description": "Invalid request"},
                     "422": {"description": "Could not identify a curriculum"},
+                },
+            }
+        },
+        "/api/v1/lecture": {
+            "post": {
+                "summary": "Generate a PowerPoint lecture from module objectives",
+                "description": (
+                    "Returns a .pptx: per objective, an explanation slide plus "
+                    "worked-example slide(s) with talking points in speaker notes."
+                ),
+                "security": [{"ApiKeyAuth": []}],
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["objectives"],
+                                "properties": {
+                                    "objectives": {
+                                        "type": "string",
+                                        "description": "Free-form objectives (list or prose).",
+                                    },
+                                    "title": {"type": "string"},
+                                },
+                            },
+                            "example": LECTURE_EXAMPLE,
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {"description": "module-lecture.pptx (PowerPoint)"},
+                    "400": {"description": "Invalid request"},
+                    "422": {"description": "No objectives could be parsed"},
                 },
             }
         },
@@ -219,6 +267,41 @@ def make_schedule():
     if "error" in result:
         return error_response("no_curriculum", result["error"], 422)
     return jsonify(result)
+
+
+@api.route("/api/v1/lecture", methods=["POST"])
+@require_api_key
+def make_lecture():
+    data = request.get_json(silent=True) or {}
+    objectives = data.get("objectives")
+    if isinstance(objectives, list):
+        objectives = "\n".join(str(item) for item in objectives)
+    objectives = (objectives or "").strip()
+    title = (data.get("title") or "Module Lecture").strip()
+
+    if len(objectives) < MIN_OBJECTIVES_LENGTH:
+        return error_response("invalid_request", "Provide the module's learning objectives.", 400)
+    if len(objectives) > MAX_OBJECTIVES_LENGTH:
+        return error_response(
+            "invalid_request",
+            f"Objectives too long (max {MAX_OBJECTIVES_LENGTH} chars).",
+            400,
+        )
+
+    try:
+        payload, summary = build_lecture_deck(objectives, title)
+    except LectureError as error:
+        return error_response("invalid_request", str(error), 422)
+    except Exception:
+        current_app.logger.exception("lecture generation failed")
+        return error_response("internal_error", "Something went wrong while building the lecture.", 500)
+    current_app.logger.info("lecture generated: %s objectives", summary["objectives"])
+    return send_file(
+        io.BytesIO(payload),
+        mimetype=PPTX_MIMETYPE,
+        as_attachment=True,
+        download_name="module-lecture.pptx",
+    )
 
 
 @api.route("/api/v1/materials", methods=["POST"])

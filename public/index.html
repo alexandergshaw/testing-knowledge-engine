@@ -63,6 +63,26 @@
       <p id="materials-status" class="status" hidden></p>
     </section>
 
+    <section class="panel lecture">
+      <h2 class="materials-title">Module lecture generator</h2>
+      <p class="materials-hint">Paste your module's learning objectives in any format —
+        a list, or prose like "students will be able to…". Get a PowerPoint that
+        explains each objective with worked examples and speaker-note talking points,
+        built from cited sources with no AI.</p>
+      <form id="lecture-form" autocomplete="off">
+        <label for="lecture-title">Module title <span class="muted-note">— optional</span></label>
+        <input id="lecture-title" type="text" maxlength="120"
+          placeholder="e.g. Introduction to Python">
+        <label for="lecture-objectives">Learning objectives</label>
+        <textarea id="lecture-objectives" rows="6" maxlength="4000" required
+          placeholder="e.g. By the end of this module, students will be able to define variables, explain control flow, and write functions."></textarea>
+        <div class="form-row">
+          <button type="submit" id="lecture-generate">Generate lecture</button>
+        </div>
+      </form>
+      <p id="lecture-status" class="status" hidden></p>
+    </section>
+
     <section class="panel api-console">
       <h2 class="materials-title">API console</h2>
       <p class="materials-hint">Test the live API directly. Calls include your API key
