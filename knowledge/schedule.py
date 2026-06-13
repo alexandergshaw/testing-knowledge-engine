@@ -6,6 +6,7 @@ Wikibooks textbooks, Wikipedia outlines via knowledge.curriculum), guarantees
 topics the description explicitly requires, and allocates everything across
 the requested number of term weeks."""
 
+import datetime
 import re
 
 from .cache import TTLCache
@@ -317,10 +318,139 @@ def allocate(topic_names, weeks):
     ]
 
 
-def build_schedule(description, weeks):
+# --- calendar dates, assignments, and exam placement -------------------------
+
+# Locale-independent month abbreviations (calendar/strftime depend on locale).
+_MONTHS = [
+    "", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+]
+_REVIEW_TOPIC = re.compile(r"^(?:midterm review|review and final|review)\b", re.IGNORECASE)
+
+
+def _format_week_dates(monday):
+    """'Mon D – Mon D' for the Mon–Fri of the given week's Monday."""
+    friday = monday + datetime.timedelta(days=4)
+    return f"{_MONTHS[monday.month]} {monday.day} – {_MONTHS[friday.month]} {friday.day}"
+
+
+def _week_kind(topics):
+    if topics and all(t.strip().lower() == "exam" for t in topics):
+        return "exam"
+    if topics and all(_REVIEW_TOPIC.match(t) for t in topics):
+        return "review"
+    return "instruction"
+
+
+def _assignment_for(kind, topics):
+    """A brief, deterministic homework/activity line for a week."""
+    if kind == "exam":
+        return "Test"
+    if kind == "review":
+        return "Review prior material and complete the practice set"
+    continued = any(t.endswith("(continued)") for t in topics)
+    display = []
+    for topic in topics:
+        name = re.sub(r"\s*\(continued\)\s*$", "", topic)
+        if name and name not in display:
+            display.append(name)
+    joined = ", ".join(display) if display else "this week's material"
+    return ("Continue exercises: " if continued else "Exercises: ") + joined
+
+
+def _distribute_topics(topic_names, slots):
+    """Exactly `slots` instruction cells covering every topic — contiguous
+    groups when topics outnumber slots, '(continued)' spans when fewer. No
+    review/exam filler (that is layered on separately)."""
+    if slots <= 0:
+        return []
+    count = len(topic_names)
+    if count == 0:
+        return [[] for _ in range(slots)]
+    if count >= slots:
+        base, remainder = divmod(count, slots)
+        cells, index = [], 0
+        for position in range(slots):
+            size = base + (1 if position < remainder else 0)
+            cells.append(list(topic_names[index : index + size]))
+            index += size
+        return cells
+    base, remainder = divmod(slots, count)
+    cells = []
+    for index, name in enumerate(topic_names):
+        span = base + (1 if index < remainder else 0)
+        cells.append([name])
+        cells.extend([f"{name} (continued)"] for _ in range(span - 1))
+    return cells
+
+
+def _layout_with_tests(topic_names, weeks, tests):
+    """Ordered (topics, kind) cells totalling exactly `weeks`. `tests` exams are
+    spread evenly, each at the end of a topic block and preceded by a review
+    week. Every block needs at least one instruction week, so the feasible exam
+    count is capped at weeks // 3; excess (or a poor fit) degrades gracefully."""
+    feasible = min(tests, weeks // 3)
+    if feasible <= 0:
+        return [(cell, "instruction") for cell in _distribute_topics(topic_names, weeks)]
+
+    instruction_weeks = weeks - 2 * feasible
+    cells = _distribute_topics(topic_names, instruction_weeks)
+    base, remainder = divmod(instruction_weeks, feasible)
+
+    layout, index = [], 0
+    for block in range(feasible):
+        size = base + (1 if block < remainder else 0)
+        layout.extend((cell, "instruction") for cell in cells[index : index + size])
+        index += size
+        layout.append((["Review"], "review"))
+        layout.append((["Exam"], "exam"))
+    return layout
+
+
+def build_week_records(topic_names, weeks, tests=0, start_date=None):
+    """Per-week records with topics, kind, assignment, and (when start_date is
+    given) calendar dates. Length always equals `weeks`."""
+    if tests and tests > 0:
+        layout = _layout_with_tests(topic_names, weeks, tests)
+    else:
+        # Backward-compatible path: today's allocation, now annotated.
+        layout = [(group["topics"], _week_kind(group["topics"])) for group in allocate(topic_names, weeks)]
+
+    monday0 = None
+    if start_date is not None:
+        monday0 = start_date - datetime.timedelta(days=start_date.weekday())
+
+    records = []
+    for index, (topics, kind) in enumerate(layout):
+        record = {
+            "week": index + 1,
+            "topics": topics,
+            "assignment": _assignment_for(kind, topics),
+            "kind": kind,
+        }
+        if monday0 is not None:
+            record["dates"] = _format_week_dates(monday0 + datetime.timedelta(days=7 * index))
+        records.append(record)
+    return records
+
+
+def build_schedule(description, weeks, start_date=None, tests=0, term=None):
     """The /api/schedule entry point. Returns the response dict, including an
-    'error' key when no usable curriculum could be assembled."""
-    key = (" ".join(description.lower().split()), int(weeks))
+    'error' key when no usable curriculum could be assembled.
+
+    Optional: start_date (datetime.date) adds per-week calendar dates; tests
+    (int) places that many exams (each preceded by a review) within `weeks`;
+    term is an echoed label."""
+    weeks = max(MIN_WEEKS, min(int(weeks), MAX_WEEKS))
+    tests = int(tests or 0)
+    start_key = start_date.isoformat() if start_date else ""
+    key = (
+        " ".join(description.lower().split()),
+        weeks,
+        start_key,
+        tests,
+        (term or "").strip().lower(),
+    )
     cached = _cache.get(key)
     if cached is not None:
         return cached
@@ -375,11 +505,13 @@ def build_schedule(description, weeks):
 
     result = {
         "subject": query.subject or "Course",
-        "weeks": allocate([t["name"] for t in topics], weeks),
+        "weeks": build_week_records([t["name"] for t in topics], weeks, tests, start_date),
         "topics": topics,
         "citations": citations,
         "confidence": confidence,
     }
+    if term:
+        result["term"] = term
     # A sourceless result for a known subject usually means the source APIs
     # failed (rate limit, outage) — don't poison the cache with it for an hour.
     if citations or not query.subject:

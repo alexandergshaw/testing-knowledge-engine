@@ -9,6 +9,7 @@ minimal-deps, no-LLM ethos. CORS itself is applied app-wide in `app.py`.
 import hmac
 import io
 import os
+from datetime import date
 from functools import wraps
 
 from flask import Blueprint, current_app, jsonify, request, send_file
@@ -22,6 +23,8 @@ MIN_DESCRIPTION_LENGTH = 15
 MAX_DESCRIPTION_LENGTH = 5000
 MIN_OBJECTIVES_LENGTH = 10
 MAX_OBJECTIVES_LENGTH = 4000
+MAX_TESTS = 12
+MAX_TERM_LENGTH = 60
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 PPTX_MIMETYPE = (
     "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -82,6 +85,46 @@ SCHEDULE_EXAMPLE = {
         "variables, control flow, functions, and object-oriented programming."
     ),
     "weeks": 14,
+    "startDate": "2026-08-24",
+    "tests": 2,
+    "term": "Fall 2026",
+}
+
+SCHEDULE_RESPONSE_EXAMPLE = {
+    "subject": "Python",
+    "confidence": "high",
+    "term": "Fall 2026",
+    "weeks": [
+        {
+            "week": 1,
+            "dates": "Aug 24 – Aug 28",
+            "topics": ["Introduction", "Variables"],
+            "assignment": "Exercises: Introduction, Variables",
+            "kind": "instruction",
+        },
+        {
+            "week": 6,
+            "dates": "Sep 28 – Oct 2",
+            "topics": ["Review"],
+            "assignment": "Review prior material and complete the practice set",
+            "kind": "review",
+        },
+        {
+            "week": 7,
+            "dates": "Oct 5 – Oct 9",
+            "topics": ["Exam"],
+            "assignment": "Test",
+            "kind": "exam",
+        },
+    ],
+    "topics": [{"name": "Variables", "citations": [1], "position": 0.05}],
+    "citations": [
+        {
+            "title": "Python Programming",
+            "url": "https://en.wikiversity.org/wiki/Python_Programming",
+            "source": "Wikiversity",
+        }
+    ],
 }
 
 LECTURE_EXAMPLE = {
@@ -128,11 +171,30 @@ OPENAPI_SPEC = {
                                 "type": "object",
                                 "required": ["description", "weeks"],
                                 "properties": {
-                                    "description": {"type": "string"},
+                                    "description": {
+                                        "type": "string",
+                                        "description": "Free-text course description.",
+                                    },
                                     "weeks": {
                                         "type": "integer",
                                         "minimum": schedule.MIN_WEEKS,
                                         "maximum": schedule.MAX_WEEKS,
+                                        "description": "Total weeks in the term. The schedule always returns exactly this many weeks.",
+                                    },
+                                    "startDate": {
+                                        "type": "string",
+                                        "format": "date",
+                                        "description": "Optional. First day of instruction (ISO YYYY-MM-DD). When present, each week includes a Mon–Fri 'dates' range.",
+                                    },
+                                    "tests": {
+                                        "type": "integer",
+                                        "minimum": 0,
+                                        "default": 0,
+                                        "description": "Optional. Number of exams placed evenly across the term; each exam week is preceded by a review week, and both count toward the total weeks.",
+                                    },
+                                    "term": {
+                                        "type": "string",
+                                        "description": "Optional. Term label, e.g. 'Fall 2026', echoed back in the response.",
                                     },
                                 },
                             },
@@ -141,7 +203,46 @@ OPENAPI_SPEC = {
                     },
                 },
                 "responses": {
-                    "200": {"description": "Weekly schedule"},
+                    "200": {
+                        "description": "Weekly schedule",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "subject": {"type": "string"},
+                                        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+                                        "term": {"type": "string", "description": "Present only when supplied in the request."},
+                                        "weeks": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "week": {"type": "integer"},
+                                                    "topics": {"type": "array", "items": {"type": "string"}},
+                                                    "dates": {
+                                                        "type": "string",
+                                                        "description": "Mon–Fri range, e.g. 'Aug 24 – Aug 28'. Present only when startDate was provided.",
+                                                    },
+                                                    "assignment": {
+                                                        "type": "string",
+                                                        "description": "Homework/activity for the week; 'Test' on exam weeks.",
+                                                    },
+                                                    "kind": {
+                                                        "type": "string",
+                                                        "enum": ["instruction", "review", "exam"],
+                                                    },
+                                                },
+                                            },
+                                        },
+                                        "topics": {"type": "array", "items": {"type": "object"}},
+                                        "citations": {"type": "array", "items": {"type": "object"}},
+                                    },
+                                },
+                                "example": SCHEDULE_RESPONSE_EXAMPLE,
+                            }
+                        },
+                    },
                     "400": {"description": "Invalid request"},
                     "422": {"description": "Could not identify a curriculum"},
                 },
@@ -259,8 +360,36 @@ def make_schedule():
             400,
         )
 
+    # Optional scheduling controls (backward compatible — absent => today's behavior).
+    start_date = None
+    raw_start = data.get("startDate")
+    if raw_start not in (None, ""):
+        if not isinstance(raw_start, str):
+            return error_response("invalid_request", "startDate must be an ISO date string (YYYY-MM-DD).", 400)
+        try:
+            start_date = date.fromisoformat(raw_start)
+        except ValueError:
+            return error_response("invalid_request", "startDate must be a valid ISO date (YYYY-MM-DD).", 400)
+
+    raw_tests = data.get("tests", 0)
     try:
-        result = schedule.build_schedule(description, weeks)
+        tests = int(raw_tests) if raw_tests not in (None, "") else 0
+    except (TypeError, ValueError):
+        return error_response("invalid_request", "tests must be a non-negative integer.", 400)
+    if tests < 0 or tests > MAX_TESTS:
+        return error_response("invalid_request", f"tests must be between 0 and {MAX_TESTS}.", 400)
+
+    term = data.get("term")
+    if term is not None and not isinstance(term, str):
+        return error_response("invalid_request", "term must be a string.", 400)
+    term = (term or "").strip()
+    if len(term) > MAX_TERM_LENGTH:
+        return error_response("invalid_request", f"term too long (max {MAX_TERM_LENGTH} chars).", 400)
+
+    try:
+        result = schedule.build_schedule(
+            description, weeks, start_date=start_date, tests=tests, term=term or None
+        )
     except Exception:
         current_app.logger.exception("schedule failure")
         return error_response("internal_error", "Something went wrong while building the schedule.", 500)

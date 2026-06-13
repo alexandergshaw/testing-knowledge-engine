@@ -74,23 +74,35 @@ label {
   margin-top: 0.4rem;
 }
 
-.weeks-field {
+.weeks-field,
+.schedule-options .field {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
 }
 
-#weeks {
-  width: 7rem;
+.schedule-options { flex-wrap: wrap; }
+
+#weeks,
+#start-date,
+#tests,
+#term {
   background: var(--bg);
   border: 1px solid var(--panel-2);
   border-radius: 10px;
   color: var(--text);
   padding: 0.65rem 0.8rem;
   font-size: 1rem;
+  font-family: inherit;
   outline: none;
 }
-#weeks:focus { border-color: var(--accent); }
+#weeks { width: 7rem; }
+#tests { width: 6rem; }
+#term { width: 9rem; }
+#weeks:focus,
+#start-date:focus,
+#tests:focus,
+#term:focus { border-color: var(--accent); }
 
 #generate {
   margin-left: auto;
@@ -150,19 +162,24 @@ label {
 .week-list li:last-child { border-bottom: none; }
 
 .week-num {
-  flex: 0 0 4.5rem;
+  flex: 0 0 8.5rem;
   font-weight: 600;
   color: var(--accent);
-  font-size: 0.85rem;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+  font-size: 0.82rem;
+  letter-spacing: 0.02em;
   padding-top: 0.1rem;
 }
 
-.week-topics { flex: 1; }
-.week-topics .extra {
+.week-main { flex: 1; }
+.week-topics .extra { color: var(--muted); }
+.week-assignment {
   color: var(--muted);
+  font-size: 0.82rem;
+  margin-top: 0.2rem;
 }
+
+.week-list li.kind-review { border-left: 3px solid var(--warn); padding-left: 0.6rem; }
+.week-list li.kind-exam { border-left: 3px solid var(--accent); padding-left: 0.6rem; }
 
 .citations {
   margin-top: 1rem;

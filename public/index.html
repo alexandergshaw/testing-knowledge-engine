@@ -19,11 +19,25 @@
       <textarea id="description" rows="7" maxlength="5000" required
         placeholder="e.g. An introductory college course in Python programming. Students will learn the fundamentals of programming, covering variables, control flow, functions, data structures, file handling, and object-oriented programming."></textarea>
 
-      <div class="form-row">
-        <div class="weeks-field">
+      <div class="form-row schedule-options">
+        <div class="field">
           <label for="weeks">Weeks in term</label>
           <input id="weeks" type="number" min="1" max="52" value="14" required>
         </div>
+        <div class="field">
+          <label for="start-date">Start date <span class="muted-note">— optional</span></label>
+          <input id="start-date" type="date">
+        </div>
+        <div class="field">
+          <label for="tests">Tests <span class="muted-note">— optional</span></label>
+          <input id="tests" type="number" min="0" value="0">
+        </div>
+        <div class="field">
+          <label for="term">Term <span class="muted-note">— optional</span></label>
+          <input id="term" type="text" maxlength="60" placeholder="Fall 2026">
+        </div>
+      </div>
+      <div class="form-row">
         <button type="submit" id="generate">Generate schedule</button>
       </div>
     </form>

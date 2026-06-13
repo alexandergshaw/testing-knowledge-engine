@@ -1,8 +1,13 @@
+import datetime
+
 from knowledge.schedule import (
     _filter_topics,
+    _format_week_dates,
+    _layout_with_tests,
     _weave_mentions,
     allocate,
     analyze_description,
+    build_week_records,
     extract_mentions,
 )
 
@@ -190,3 +195,72 @@ def test_alphabetical_catalog_detection():
 def test_allocate_exact_fit():
     weeks = allocate(["A", "B", "C"], 3)
     assert [w["topics"] for w in weeks] == [["A"], ["B"], ["C"]]
+
+
+# --- dates, assignments, exam placement -------------------------------------
+
+
+def test_format_week_dates_same_and_cross_month():
+    assert _format_week_dates(datetime.date(2026, 8, 24)) == "Aug 24 – Aug 28"
+    assert _format_week_dates(datetime.date(2026, 9, 28)) == "Sep 28 – Oct 2"
+
+
+def test_layout_with_tests_reviews_precede_exams_and_total_holds():
+    layout = _layout_with_tests([f"T{i}" for i in range(10)], 14, 2)
+    kinds = [kind for _, kind in layout]
+    assert len(layout) == 14
+    assert kinds.count("exam") == 2 and kinds.count("review") == 2
+    for position, kind in enumerate(kinds):
+        if kind == "exam":
+            assert kinds[position - 1] == "review"
+    assert kinds[-1] == "exam"  # final exam ends the term
+    for topics, kind in layout:
+        if kind == "review":
+            assert topics == ["Review"]
+        if kind == "exam":
+            assert topics == ["Exam"]
+        if kind == "instruction":
+            assert topics and topics not in (["Review"], ["Exam"])
+
+
+def test_layout_with_tests_caps_to_feasible():
+    # 6 weeks fit at most 6//3 = 2 exams; requesting 5 caps to 2.
+    layout = _layout_with_tests(["a", "b"], 6, 5)
+    assert len(layout) == 6
+    assert [kind for _, kind in layout].count("exam") == 2
+
+
+def test_layout_with_tests_omits_when_no_room():
+    layout = _layout_with_tests(["a", "b"], 2, 1)  # 2 // 3 == 0 exams fit
+    assert len(layout) == 2
+    assert all(kind == "instruction" for _, kind in layout)
+
+
+def test_build_week_records_dates_only_with_start_date():
+    topics = ["A", "B", "C"]
+    plain = build_week_records(topics, 3)
+    assert all("dates" not in week for week in plain)
+    assert all(week["assignment"] and week["kind"] for week in plain)
+
+    dated = build_week_records(topics, 3, start_date=datetime.date(2024, 1, 3))  # a Wednesday
+    assert dated[0]["dates"] == "Jan 1 – Jan 5"   # snaps back to Monday Jan 1
+    assert dated[1]["dates"] == "Jan 8 – Jan 12"
+
+
+def test_build_week_records_with_tests_is_complete():
+    records = build_week_records([f"T{i}" for i in range(8)], 12, tests=2)
+    assert len(records) == 12
+    assert [w["kind"] for w in records].count("exam") == 2
+    assert all(week["assignment"] for week in records)
+    exam = next(week for week in records if week["kind"] == "exam")
+    assert exam["assignment"] == "Test" and exam["topics"] == ["Exam"]
+    review = next(week for week in records if week["kind"] == "review")
+    assert "review" in review["assignment"].lower()
+
+
+def test_build_week_records_backward_compatible_shape():
+    # No tests / no startDate: still annotated with kind + assignment, no dates.
+    records = build_week_records(["A", "B", "C", "D"], 4)
+    assert [w["week"] for w in records] == [1, 2, 3, 4]
+    assert all(w["kind"] == "instruction" for w in records)
+    assert all("dates" not in w for w in records)

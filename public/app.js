@@ -56,23 +56,37 @@ function renderSchedule(data) {
   weekList.replaceChildren();
   data.weeks.forEach((week) => {
     const item = document.createElement("li");
+    if (week.kind && week.kind !== "instruction") item.classList.add(`kind-${week.kind}`);
 
     const number = document.createElement("span");
     number.className = "week-num";
-    number.textContent = `Week ${week.week}`;
+    number.textContent = week.dates ? `Week ${week.week} · ${week.dates}` : `Week ${week.week}`;
     item.appendChild(number);
 
-    const topics = document.createElement("span");
+    const main = document.createElement("span");
+    main.className = "week-main";
+
+    const topics = document.createElement("div");
     topics.className = "week-topics";
     week.topics.forEach((topic, index) => {
       if (index > 0) topics.appendChild(document.createTextNode("; "));
-      const isExtra = /\((continued)\)$|^Midterm review|^Review and final/.test(topic);
+      const isExtra = /\((continued)\)$|^Midterm review|^Review and final|^Review$|^Exam$/.test(topic);
       const node = document.createElement(isExtra ? "span" : "strong");
       if (isExtra) node.className = "extra";
       node.textContent = topic;
       topics.appendChild(node);
     });
-    item.appendChild(topics);
+    main.appendChild(topics);
+
+    if (week.assignment) {
+      const assignment = document.createElement("div");
+      assignment.className = "week-assignment";
+      const label = week.kind === "exam" ? "Assessment" : "Assignment";
+      assignment.textContent = `${label}: ${week.assignment}`;
+      main.appendChild(assignment);
+    }
+
+    item.appendChild(main);
     weekList.appendChild(item);
   });
 
@@ -219,11 +233,20 @@ form.addEventListener("submit", async (event) => {
   resultSection.hidden = true;
   showStatus("Researching published curricula", "loading");
 
+  // Optional controls — only sent when set, so the request stays minimal.
+  const body = { description, weeks };
+  const startDate = document.getElementById("start-date").value;
+  const tests = Number(document.getElementById("tests").value) || 0;
+  const term = document.getElementById("term").value.trim();
+  if (startDate) body.startDate = startDate;
+  if (tests > 0) body.tests = tests;
+  if (term) body.term = term;
+
   try {
     const response = await fetch("/api/v1/schedule", {
       method: "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ description, weeks }),
+      body: JSON.stringify(body),
     });
     const data = await response.json();
     if (!response.ok || data.error) {

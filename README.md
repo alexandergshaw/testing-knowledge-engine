@@ -117,21 +117,37 @@ The unversioned `/api/schedule` and `/api/materials` remain as deprecated
 aliases. \*Auth is **optional**: required only when the `API_KEY` env var is
 set (see below).
 
+`POST /api/v1/schedule` takes `description` and `weeks` (required), plus three
+optional fields — all backward compatible (omit them for the original behavior):
+
+- `startDate` (ISO `YYYY-MM-DD`) — adds a Mon–Fri `dates` range to each week.
+- `tests` (integer ≥ 0) — places that many exams evenly across the term, each
+  preceded by a review week; both count toward the total `weeks` (no extras).
+- `term` (string) — a label echoed back in the response.
+
 ```sh
 curl -X POST http://localhost:5050/api/v1/schedule \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $API_KEY" \
-  -d '{"description": "An introductory college course in Python programming, covering variables, functions, and object-oriented programming.", "weeks": 14}'
+  -d '{"description": "An intro Python course covering variables and functions", "weeks": 14, "startDate": "2026-08-24", "tests": 2, "term": "Fall 2026"}'
 ```
 
-Success returns the resource directly (schedule JSON, or the binary zip for
-materials):
+Success returns the resource directly (schedule JSON, or the binary file for
+lecture/materials). Each week carries `topics`, `assignment`, and `kind`
+(`instruction` | `review` | `exam`), plus `dates` when `startDate` was given:
 
 ```json
 {
   "subject": "Python",
   "confidence": "high",
-  "weeks": [{"week": 1, "topics": ["Introduction", "Variables"]}, ...],
+  "term": "Fall 2026",
+  "weeks": [
+    {"week": 1, "dates": "Aug 24 – Aug 28", "topics": ["Introduction", "Variables"],
+     "assignment": "Exercises: Introduction, Variables", "kind": "instruction"},
+    {"week": 6, "dates": "Sep 28 – Oct 2", "topics": ["Review"],
+     "assignment": "Review prior material and complete the practice set", "kind": "review"},
+    {"week": 7, "dates": "Oct 5 – Oct 9", "topics": ["Exam"], "assignment": "Test", "kind": "exam"}
+  ],
   "topics": [{"name": "Variables", "citations": [1, 2], "position": 0.05}, ...],
   "citations": [{"title": "Python Programming", "url": "...", "source": "Wikiversity"}]
 }

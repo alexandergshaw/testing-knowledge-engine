@@ -24,7 +24,7 @@ def fake_schedule(monkeypatch):
     monkeypatch.delenv("API_KEY", raising=False)
     monkeypatch.setattr(
         "knowledge.schedule.build_schedule",
-        lambda description, weeks: {
+        lambda description, weeks, start_date=None, tests=0, term=None: {
             "subject": "Python",
             "weeks": [{"week": 1, "topics": ["X"]}],
             "topics": [],
@@ -56,6 +56,57 @@ def test_schedule_happy_path(client, fake_schedule):
 
 def test_old_alias_still_works(client, fake_schedule):
     assert client.post("/api/schedule", json=VALID_BODY).status_code == 200
+
+
+@pytest.fixture
+def capture_schedule(monkeypatch):
+    """Capture the args build_schedule is called with, without network."""
+    captured = {}
+    monkeypatch.delenv("API_KEY", raising=False)
+
+    def fake(description, weeks, start_date=None, tests=0, term=None):
+        captured.update(
+            description=description, weeks=weeks, start_date=start_date, tests=tests, term=term
+        )
+        return {"subject": "X", "weeks": [], "topics": [], "citations": [], "confidence": "low"}
+
+    monkeypatch.setattr("knowledge.schedule.build_schedule", fake)
+    return captured
+
+
+def test_schedule_backward_compatible_defaults(client, capture_schedule):
+    res = client.post("/api/v1/schedule", json=VALID_BODY)
+    assert res.status_code == 200
+    assert capture_schedule["start_date"] is None
+    assert capture_schedule["tests"] == 0
+    assert capture_schedule["term"] is None
+
+
+def test_schedule_passes_through_new_fields(client, capture_schedule):
+    res = client.post(
+        "/api/v1/schedule",
+        json={**VALID_BODY, "startDate": "2026-08-24", "tests": 2, "term": "Fall 2026"},
+    )
+    assert res.status_code == 200
+    import datetime
+
+    assert capture_schedule["start_date"] == datetime.date(2026, 8, 24)
+    assert capture_schedule["tests"] == 2
+    assert capture_schedule["term"] == "Fall 2026"
+
+
+def test_schedule_rejects_bad_start_date(client, monkeypatch):
+    monkeypatch.delenv("API_KEY", raising=False)
+    res = client.post("/api/v1/schedule", json={**VALID_BODY, "startDate": "not-a-date"})
+    assert res.status_code == 400
+    assert res.get_json()["error"]["code"] == "invalid_request"
+
+
+def test_schedule_rejects_negative_tests(client, monkeypatch):
+    monkeypatch.delenv("API_KEY", raising=False)
+    res = client.post("/api/v1/schedule", json={**VALID_BODY, "tests": -1})
+    assert res.status_code == 400
+    assert res.get_json()["error"]["code"] == "invalid_request"
 
 
 def test_validation_error_envelope(client, fake_schedule):
