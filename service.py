@@ -12,9 +12,10 @@ import os
 from datetime import date
 from functools import wraps
 
-from flask import Blueprint, current_app, jsonify, request, send_file
+from flask import Blueprint, current_app, g, jsonify, request, send_file
 
-from knowledge import schedule
+import observability
+from knowledge import artifacts, schedule
 from knowledge.copilot import PROFILES, CopilotError, build_copilot_prompt
 from knowledge.lecture import LectureError, build_lecture_deck
 from knowledge.materials import MaterialsError, build_materials
@@ -80,6 +81,19 @@ def require_api_key(view):
         return view(*args, **kwargs)
 
     return wrapped
+
+
+def _archive(kind, payload, content_type, metadata):
+    """Best-effort: store a generated artifact on Vercel Blob and attach its URL
+    to this request's access-log line. Never raises (storage must not affect the
+    download)."""
+    try:
+        info = artifacts.store_artifact(
+            kind, observability.current_request_id(), payload, content_type, metadata
+        )
+        observability.record_artifact(info)
+    except Exception:
+        current_app.logger.warning("artifact archiving failed", exc_info=True)
 
 
 # --- OpenAPI spec ------------------------------------------------------------
@@ -173,6 +187,46 @@ OPENAPI_SPEC = {
                 "summary": "Liveness check",
                 "security": [],
                 "responses": {"200": {"description": "Service is up"}},
+            }
+        },
+        "/api/v1/artifacts": {
+            "get": {
+                "summary": "List recently generated lectures/materials",
+                "description": (
+                    "Returns generated .pptx/.zip artifacts archived on Vercel Blob "
+                    "(newest first), each with a download URL and its request "
+                    "metadata. 'enabled' is false when Blob storage isn't configured."
+                ),
+                "security": [{"ApiKeyAuth": []}],
+                "responses": {
+                    "200": {
+                        "description": "Stored artifacts",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "enabled": {"type": "boolean"},
+                                        "artifacts": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "name": {"type": "string"},
+                                                    "url": {"type": "string"},
+                                                    "downloadUrl": {"type": "string"},
+                                                    "size": {"type": "integer"},
+                                                    "uploadedAt": {"type": "string"},
+                                                    "metadata": {"type": "object"},
+                                                },
+                                            },
+                                        },
+                                    },
+                                }
+                            }
+                        },
+                    }
+                },
             }
         },
         "/api/v1/schedule": {
@@ -409,6 +463,14 @@ def openapi():
     return jsonify(OPENAPI_SPEC)
 
 
+@api.get("/api/v1/artifacts")
+@require_api_key
+def list_artifacts():
+    """Recent generated lectures/materials stored on Vercel Blob, newest first.
+    'enabled' is false when Blob storage isn't configured (e.g. local dev)."""
+    return jsonify({"enabled": artifacts.enabled(), "artifacts": artifacts.list_artifacts()})
+
+
 @api.route("/api/v1/schedule", methods=["POST"])
 @api.route("/api/schedule", methods=["POST"])  # deprecated alias
 @require_api_key
@@ -539,6 +601,12 @@ def make_lecture():
         current_app.logger.exception("lecture generation failed")
         return error_response("internal_error", "Something went wrong while building the lecture.", 500)
     current_app.logger.info("lecture generated: %s objectives", summary["objectives"])
+    _archive(
+        "lecture",
+        payload,
+        PPTX_MIMETYPE,
+        {"title": title, "objectives": objectives[:1000], "summary": summary},
+    )
     return send_file(
         io.BytesIO(payload),
         mimetype=PPTX_MIMETYPE,
@@ -567,6 +635,12 @@ def make_materials():
         current_app.logger.exception("materials generation failed")
         return error_response("internal_error", "Something went wrong while generating materials.", 500)
     current_app.logger.info("materials generated: %s units", summary["units"])
+    _archive(
+        "materials",
+        payload,
+        "application/zip",
+        {"filename": upload.filename, "summary": summary},
+    )
     return send_file(
         io.BytesIO(payload),
         mimetype="application/zip",

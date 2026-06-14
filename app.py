@@ -3,6 +3,7 @@ import logging
 from flask import Flask, redirect, request
 from werkzeug.exceptions import NotFound
 
+import observability
 from service import MAX_UPLOAD_BYTES, allowed_origin, api, error_response
 
 logging.basicConfig(level=logging.INFO)
@@ -13,6 +14,9 @@ logging.basicConfig(level=logging.INFO)
 app = Flask(__name__, static_folder="public", static_url_path="")
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES + 1024 * 1024
 app.register_blueprint(api)
+
+# Structured per-request access logging (one JSON line per call -> Vercel logs).
+observability.configure(app)
 
 
 @app.route("/")

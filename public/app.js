@@ -577,3 +577,77 @@ consoleSend.addEventListener("click", async () => {
 });
 
 loadOpenApi();
+
+// --- Generated artifacts -----------------------------------------------------
+const artifactsRefresh = document.getElementById("artifacts-refresh");
+const artifactsStatus = document.getElementById("artifacts-status");
+const artifactList = document.getElementById("artifact-list");
+
+function showArtifactsStatus(message, kind) {
+  artifactsStatus.textContent = message;
+  artifactsStatus.className = `status ${kind || ""}`;
+  artifactsStatus.hidden = !message;
+}
+
+function formatBytes(bytes) {
+  if (bytes === null || bytes === undefined) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function renderArtifacts(items) {
+  artifactList.innerHTML = "";
+  for (const item of items) {
+    const li = document.createElement("li");
+    li.className = "artifact-item";
+
+    const link = document.createElement("a");
+    link.href = item.downloadUrl || item.url;
+    link.textContent = item.name;
+    link.target = "_blank";
+    link.rel = "noopener";
+    li.appendChild(link);
+
+    const meta = document.createElement("div");
+    meta.className = "artifact-meta";
+    const md = item.metadata || {};
+    const label = md.title || md.filename || md.kind || "";
+    const when = item.uploadedAt ? new Date(item.uploadedAt).toLocaleString() : "";
+    meta.textContent = [label, formatBytes(item.size), when].filter(Boolean).join(" · ");
+    li.appendChild(meta);
+
+    artifactList.appendChild(li);
+  }
+}
+
+async function loadArtifacts() {
+  showArtifactsStatus("Loading artifacts", "loading");
+  try {
+    const response = await fetch("/api/v1/artifacts", { headers: authHeaders() });
+    if (response.status === 401) {
+      renderArtifacts([]);
+      showArtifactsStatus("Enter your API key above, then Refresh.", "");
+      return;
+    }
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      showArtifactsStatus(errorMessage(data) || `Request failed (${response.status})`, "error");
+      return;
+    }
+    const data = await response.json();
+    renderArtifacts(data.artifacts || []);
+    if (!data.enabled) {
+      showArtifactsStatus("Artifact storage isn't enabled on this deployment.", "");
+    } else if (!(data.artifacts || []).length) {
+      showArtifactsStatus("No artifacts generated yet.", "");
+    } else {
+      showArtifactsStatus("", "");
+    }
+  } catch (error) {
+    showArtifactsStatus("Network error — is the server running?", "error");
+  }
+}
+
+artifactsRefresh.addEventListener("click", loadArtifacts);
+loadArtifacts();

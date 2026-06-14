@@ -224,9 +224,34 @@ Errors always use one envelope, with the matching HTTP status:
 | `API_KEY` | If set, protected endpoints require it via `X-API-Key` (or `Authorization: Bearer`). If unset, the API is open — convenient for local dev. |
 | `CORS_ORIGINS` | Allowed origins, comma-separated. Default `*`. When a list is given, only matching `Origin`s are echoed back. |
 | `PORT` | Local dev port (default 5050). |
+| `LOG_LEVEL` | Access-log level (default `INFO`). |
+| `LOG_PAYLOADS` | Capture request/response JSON bodies in the access log (default on; set `0` to log metadata only). |
+| `LOG_PAYLOAD_MAX_BYTES` | Truncate captured bodies to this many bytes (default `4096`). |
+| `ARCHIVE_ARTIFACTS` | Store generated `.pptx`/`.zip` to Vercel Blob (default on; set `0` to disable). |
+| `BLOB_READ_WRITE_TOKEN` | Auto-provisioned when you enable **Storage → Blob** on the Vercel project; required for artifact archiving. Unset locally → archiving is skipped gracefully. |
 
 CORS is enabled (cross-origin clients are supported); the API key travels in a
 header, never a cookie.
+
+### Logging & generated artifacts
+
+Every request emits one structured JSON line to stdout
+([observability.py](observability.py)), which Vercel surfaces in **Runtime Logs
+/ Observability** (filterable by field): method, path, status, duration, sizes,
+client IP, `api_key_present` (the key value is **never** logged), and the
+request/response JSON bodies (capped + redacted; binary `.pptx`/`.zip` bodies
+are logged by size only).
+
+Generated lectures and material bundles are archived to **Vercel Blob**
+([knowledge/artifacts.py](knowledge/artifacts.py)) — no new dependency (REST via
+`requests`) — and the stored URL is attached to that request's log line. Browse
+them via the authed `GET /api/v1/artifacts` (newest first, with each file's
+request metadata) or the **Generated artifacts** panel in the UI. To enable it,
+turn on **Storage → Blob** for the Vercel project (provisions
+`BLOB_READ_WRITE_TOKEN`); until then everything runs and just reports
+`"enabled": false`. Set `API_KEY` so stored artifacts aren't world-listable. A
+`.pptx` URL downloads the exact file (open in PowerPoint/Slides); in-browser
+slide rendering isn't included.
 
 ## Tests
 

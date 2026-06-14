@@ -198,3 +198,38 @@ def test_unknown_path_returns_json_404(client):
     res = client.get("/api/v1/nope")
     assert res.status_code == 404
     assert res.get_json()["error"]["code"] == "not_found"
+
+
+def test_artifacts_endpoint_lists(client, monkeypatch):
+    monkeypatch.delenv("API_KEY", raising=False)
+    monkeypatch.setattr(service_module.artifacts, "enabled", lambda: True)
+    monkeypatch.setattr(
+        service_module.artifacts,
+        "list_artifacts",
+        lambda: [{"name": "a.pptx", "url": "u", "downloadUrl": "u", "size": 1,
+                  "uploadedAt": "t", "metadata": {}}],
+    )
+    res = client.get("/api/v1/artifacts")
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["enabled"] is True
+    assert data["artifacts"][0]["name"] == "a.pptx"
+
+
+def test_artifacts_endpoint_is_auth_gated(client, monkeypatch):
+    monkeypatch.setenv("API_KEY", "secret")
+    res = client.get("/api/v1/artifacts")
+    assert res.status_code == 401
+
+
+def test_artifacts_disabled_without_blob(client, monkeypatch):
+    monkeypatch.delenv("API_KEY", raising=False)
+    monkeypatch.delenv("BLOB_READ_WRITE_TOKEN", raising=False)
+    res = client.get("/api/v1/artifacts")
+    assert res.status_code == 200
+    assert res.get_json() == {"enabled": False, "artifacts": []}
+
+
+def test_openapi_includes_artifacts(client):
+    spec = client.get("/api/v1/openapi.json").get_json()
+    assert "/api/v1/artifacts" in spec["paths"]

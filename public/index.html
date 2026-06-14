@@ -138,6 +138,18 @@
       </div>
     </section>
 
+    <section class="panel artifacts-panel">
+      <div class="artifacts-head">
+        <h2 class="materials-title">Generated artifacts</h2>
+        <button type="button" id="artifacts-refresh">Refresh</button>
+      </div>
+      <p class="materials-hint">Lectures and material bundles generated through this
+        deployment, archived to Vercel Blob — click any to download. Sends your API
+        key when set. Shows nothing until Blob storage is enabled on the deployment.</p>
+      <p id="artifacts-status" class="status" hidden></p>
+      <ul id="artifact-list" class="artifact-list"></ul>
+    </section>
+
     <p id="status" class="status" hidden></p>
   </main>
   <script src="app.js"></script>
