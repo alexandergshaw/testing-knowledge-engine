@@ -15,6 +15,7 @@ from functools import wraps
 from flask import Blueprint, current_app, jsonify, request, send_file
 
 from knowledge import schedule
+from knowledge.copilot import PROFILES, CopilotError, build_copilot_prompt
 from knowledge.lecture import LectureError, build_lecture_deck
 from knowledge.materials import MaterialsError, build_materials
 
@@ -25,6 +26,10 @@ MIN_OBJECTIVES_LENGTH = 10
 MAX_OBJECTIVES_LENGTH = 4000
 MAX_TESTS = 12
 MAX_TERM_LENGTH = 60
+MIN_SCHEDULE_LENGTH = 15
+MAX_SCHEDULE_LENGTH = 50000
+MAX_FILENAME_LENGTH = 256
+MAX_THEME_LENGTH = 300
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 PPTX_MIMETYPE = (
     "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -133,6 +138,17 @@ LECTURE_EXAMPLE = {
         "By the end of this module, students will be able to define variables, "
         "explain control flow, and write functions."
     ),
+}
+
+COPILOT_EXAMPLE = {
+    "schedule": (
+        "Week,Dates,Topics,Assignment\n"
+        '1,"Aug 17 – Aug 21","Variables",""\n'
+        '2,"Aug 24 – Aug 28","Functions",""\n'
+        '3,"Aug 31 – Sep 4","Review",""\n'
+        '4,"Sep 7 – Sep 11","Midterm exam",""'
+    ),
+    "language": "python",
 }
 
 OPENAPI_SPEC = {
@@ -245,6 +261,66 @@ OPENAPI_SPEC = {
                     },
                     "400": {"description": "Invalid request"},
                     "422": {"description": "Could not identify a curriculum"},
+                },
+            }
+        },
+        "/api/v1/copilot-prompt": {
+            "post": {
+                "summary": "Stitch a schedule into a GitHub Copilot project prompt",
+                "description": (
+                    "Deterministically turns a course schedule (CSV or text) into a "
+                    "ready-to-paste Copilot Agent-mode prompt that scaffolds a full "
+                    "student project. Makes no upstream calls — always fast, no LLM."
+                ),
+                "security": [{"ApiKeyAuth": []}],
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["schedule"],
+                                "properties": {
+                                    "schedule": {
+                                        "type": "string",
+                                        "description": "Raw CSV or text of the weekly schedule (Week, Dates, Topics, Assignment).",
+                                    },
+                                    "fileName": {
+                                        "type": "string",
+                                        "description": "Optional. Extra signal for language inference.",
+                                    },
+                                    "language": {
+                                        "type": "string",
+                                        "enum": sorted(PROFILES),
+                                        "description": "Optional. Override the inferred course language.",
+                                    },
+                                    "projectTheme": {
+                                        "type": "string",
+                                        "description": "Optional. Override the inferred project theme.",
+                                    },
+                                },
+                            },
+                            "example": COPILOT_EXAMPLE,
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {
+                        "description": "The Copilot prompt",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "prompt": {"type": "string"},
+                                        "language": {"type": "string"},
+                                        "weeks": {"type": "integer"},
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "400": {"description": "Invalid or unparseable schedule"},
                 },
             }
         },
@@ -395,6 +471,44 @@ def make_schedule():
         return error_response("internal_error", "Something went wrong while building the schedule.", 500)
     if "error" in result:
         return error_response("no_curriculum", result["error"], 422)
+    return jsonify(result)
+
+
+@api.route("/api/v1/copilot-prompt", methods=["POST"])
+@api.route("/api/copilot-prompt", methods=["POST"])  # deprecated alias
+@require_api_key
+def make_copilot_prompt():
+    data = request.get_json(silent=True) or {}
+    schedule_text = data.get("schedule")
+    if not isinstance(schedule_text, str) or not schedule_text.strip():
+        return error_response("invalid_request", "Field 'schedule' is required.", 400)
+    schedule_text = schedule_text.strip()
+    if not MIN_SCHEDULE_LENGTH <= len(schedule_text) <= MAX_SCHEDULE_LENGTH:
+        return error_response(
+            "invalid_request",
+            f"'schedule' must be {MIN_SCHEDULE_LENGTH}–{MAX_SCHEDULE_LENGTH} characters.",
+            400,
+        )
+
+    file_name = data.get("fileName")
+    if file_name is not None and (not isinstance(file_name, str) or len(file_name) > MAX_FILENAME_LENGTH):
+        return error_response("invalid_request", f"'fileName' must be a string ≤ {MAX_FILENAME_LENGTH} chars.", 400)
+
+    language = data.get("language")
+    if language is not None and language not in PROFILES:
+        return error_response("invalid_request", f"'language' must be one of {sorted(PROFILES)}.", 400)
+
+    project_theme = data.get("projectTheme")
+    if project_theme is not None and (not isinstance(project_theme, str) or len(project_theme) > MAX_THEME_LENGTH):
+        return error_response("invalid_request", f"'projectTheme' must be a string ≤ {MAX_THEME_LENGTH} chars.", 400)
+
+    try:
+        result = build_copilot_prompt(schedule_text, file_name, language, project_theme)
+    except CopilotError as error:
+        return error_response("invalid_request", str(error), 400)
+    except Exception:
+        current_app.logger.exception("copilot-prompt generation failed")
+        return error_response("internal_error", "Something went wrong while building the prompt.", 500)
     return jsonify(result)
 
 

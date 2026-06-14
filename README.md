@@ -37,6 +37,27 @@ Results are cached in memory for an hour. Confidence is "high" when 2+
 independent sources corroborate the curriculum, "medium" for one, "low" when
 the schedule comes only from the description itself.
 
+## Copilot prompt endpoint
+
+`POST /api/v1/copilot-prompt` is the "schedule → Copilot → materials" bridge:
+give it a schedule (CSV or plain text) and it returns a ready-to-paste GitHub
+Copilot Agent-mode prompt that scaffolds a full student project repository.
+Like everything here it is **deterministic and LLM-free** — same input yields
+byte-identical output, no provider or API key for any model involved.
+
+[knowledge/copilot.py](knowledge/copilot.py) parses the schedule, classifies
+each week (instructional / review / exam by regex), infers the course
+language + domain from keywords (overridable via `language` / `projectTheme`),
+maps weeks to `assignmentN` / `reviewN` / `examN` folders, and renders a fixed
+template. Request: `{ "schedule": "...", "fileName"?, "language"?, "projectTheme"? }`
+→ `{ "prompt", "language", "weeks" }`.
+
+```sh
+curl -X POST http://localhost:5050/api/v1/copilot-prompt \
+  -H "Content-Type: application/json" \
+  -d '{"schedule": "Week,Dates,Topics,Assignment\n1,\"Aug 17 – Aug 21\",\"Variables\",\"\""}'
+```
+
 ## Module lecture generator
 
 Paste a module's learning objectives — in **any format** (a list, or prose like
@@ -110,6 +131,7 @@ domain logic stays in `knowledge/`. A self-describing OpenAPI spec is served at
 | GET | `/api/v1/health` | no | liveness/version |
 | GET | `/api/v1/openapi.json` | no | OpenAPI 3.1 contract |
 | POST | `/api/v1/schedule` | yes* | course description → weekly schedule (JSON) |
+| POST | `/api/v1/copilot-prompt` | yes* | schedule (CSV/text) → GitHub Copilot project prompt (JSON) |
 | POST | `/api/v1/lecture` | yes* | module objectives → PowerPoint lecture (`.pptx`) |
 | POST | `/api/v1/materials` | yes* | project zip → materials zip (`application/zip`) |
 

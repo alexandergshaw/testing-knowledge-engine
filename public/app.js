@@ -339,6 +339,9 @@ const consoleStatusEl = document.getElementById("console-status");
 const consoleTiming = document.getElementById("console-timing");
 const consoleCurl = document.getElementById("console-curl");
 const consoleResponse = document.getElementById("console-response");
+const consoleFields = document.getElementById("console-fields");
+const consoleRawLabel = document.getElementById("console-raw-label");
+const consoleRaw = document.getElementById("console-raw");
 
 let consoleOps = [];
 
@@ -378,21 +381,112 @@ function currentOp() {
   return consoleOps[Number(consoleEndpoint.value)] || null;
 }
 
+// Build one typed input per request-schema property — date pickers for
+// `format: date`, number inputs for integers (with min/max), textareas for long
+// strings — so every endpoint gets proper controls straight from the OpenAPI doc.
+function buildField(name, schema, required, example) {
+  const wrap = document.createElement("div");
+  wrap.className = "cfield";
+
+  const label = document.createElement("label");
+  label.htmlFor = `cf-${name}`;
+  label.textContent = name;
+  if (required) {
+    const star = document.createElement("span");
+    star.className = "req";
+    star.textContent = " *";
+    label.appendChild(star);
+  }
+  if (schema.description) label.title = schema.description;
+  wrap.appendChild(label);
+
+  // Optional fields default empty ("sensible empty defaults"); required ones
+  // prefill from the example so the default call works.
+  const prefill = required && example != null ? example : "";
+  const numeric = schema.type === "integer" || schema.type === "number";
+  let input;
+  if (numeric) {
+    input = document.createElement("input");
+    input.type = "number";
+    if (schema.minimum != null) input.min = schema.minimum;
+    if (schema.maximum != null) input.max = schema.maximum;
+    if (prefill !== "") input.value = prefill;
+  } else if (schema.format === "date") {
+    input = document.createElement("input");
+    input.type = "date";
+    if (prefill) input.value = prefill;
+  } else if (typeof prefill === "string" && prefill.length > 60) {
+    input = document.createElement("textarea");
+    input.rows = 4;
+    input.value = prefill;
+  } else {
+    input = document.createElement("input");
+    input.type = "text";
+    if (prefill) input.value = prefill;
+  }
+  input.id = `cf-${name}`;
+  input.dataset.field = name;
+  input.dataset.numeric = numeric ? "1" : "";
+  if (schema.description) input.placeholder = schema.description.slice(0, 64);
+  wrap.appendChild(input);
+  return wrap;
+}
+
+function renderConsoleFields(op) {
+  consoleFields.replaceChildren();
+  const schema = op.json && op.json.schema;
+  if (!(op.method === "POST" && schema)) return;
+  const required = new Set(schema.required || []);
+  const example = op.json.example || {};
+  // Required fields first (the API serializes properties alphabetically).
+  const entries = Object.entries(schema.properties || {}).sort(
+    ([a], [b]) => Number(required.has(b)) - Number(required.has(a))
+  );
+  entries.forEach(([name, propSchema]) => {
+    if (propSchema.format === "binary") return; // file fields use the upload control
+    consoleFields.appendChild(buildField(name, propSchema, required.has(name), example[name]));
+  });
+}
+
+function bodyFromFields() {
+  const body = {};
+  consoleFields.querySelectorAll("[data-field]").forEach((input) => {
+    const value = input.value.trim();
+    if (value === "") return; // omit empties: keeps optionals out, lets the API validate required
+    body[input.dataset.field] = input.dataset.numeric ? Number(value) : value;
+  });
+  return body;
+}
+
+// The body that will actually be sent — the raw textarea when in raw mode,
+// otherwise the typed fields serialized to JSON.
+function consoleBodyJson() {
+  return consoleRaw.checked ? consoleBody.value : JSON.stringify(bodyFromFields(), null, 2);
+}
+
+function applyRawMode(wantsJson) {
+  const raw = wantsJson && consoleRaw.checked;
+  consoleFields.hidden = !wantsJson || raw;
+  consoleBody.hidden = !raw;
+  consoleBodyLabel.hidden = !raw;
+  if (raw) consoleBody.value = JSON.stringify(bodyFromFields(), null, 2); // seed from fields
+}
+
 function syncConsoleForm() {
   const op = currentOp();
   if (!op) return;
-  const wantsJson = op.method === "POST" && op.json;
-  consoleBody.hidden = !wantsJson;
-  consoleBodyLabel.hidden = !wantsJson;
+  const wantsJson = op.method === "POST" && Boolean(op.json);
+  renderConsoleFields(op);
+  consoleRawLabel.hidden = !wantsJson;
   consoleFileRow.hidden = !op.multipart;
-  if (wantsJson) {
-    consoleBody.value = op.json.example
-      ? JSON.stringify(op.json.example, null, 2)
-      : "{}";
-  }
+  applyRawMode(wantsJson);
 }
 
 consoleEndpoint.addEventListener("change", syncConsoleForm);
+consoleRaw.addEventListener("change", () => {
+  const op = currentOp();
+  if (op) applyRawMode(op.method === "POST" && Boolean(op.json));
+});
 
 function buildCurl(op) {
   const parts = [`curl -X ${op.method} ${window.location.origin}${op.path}`];
@@ -400,7 +494,7 @@ function buildCurl(op) {
   if (key) parts.push(`-H "X-API-Key: ${key}"`);
   if (op.method === "POST" && op.json) {
     parts.push(`-H "Content-Type: application/json"`);
-    parts.push(`-d '${consoleBody.value.replace(/\s+/g, " ").trim()}'`);
+    parts.push(`-d '${consoleBodyJson().replace(/\s+/g, " ").trim()}'`);
   } else if (op.multipart) {
     parts.push(`-F "project=@your-project.zip"`);
   }
@@ -422,7 +516,7 @@ consoleSend.addEventListener("click", async () => {
   const init = { method: op.method, headers: authHeaders() };
   if (op.method === "POST" && op.json) {
     init.headers = authHeaders({ "Content-Type": "application/json" });
-    init.body = consoleBody.value;
+    init.body = consoleBodyJson();
   } else if (op.multipart) {
     const file = consoleFile.files[0];
     if (!file) {
@@ -444,17 +538,22 @@ consoleSend.addEventListener("click", async () => {
     consoleTiming.textContent = `${Math.round(performance.now() - started)} ms`;
 
     const type = response.headers.get("Content-Type") || "";
-    if (type.includes("application/zip")) {
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const isBinary =
+      /zip|presentation|officedocument|octet-stream/.test(type) || /attachment/.test(disposition);
+    if (isBinary) {
       const blob = await response.blob();
+      const match = /filename="?([^"]+)"?/.exec(disposition);
+      const filename = match ? match[1] : "download";
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = "course-materials.zip";
+      link.download = filename;
       document.body.appendChild(link);
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
-      consoleResponse.value = `binary application/zip — ${blob.size.toLocaleString()} bytes (downloaded as course-materials.zip)`;
+      consoleResponse.value = `binary ${type || "file"} — ${blob.size.toLocaleString()} bytes (downloaded as ${filename})`;
     } else {
       const text = await response.text();
       try {

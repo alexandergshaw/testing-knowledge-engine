@@ -114,8 +114,13 @@
         <button type="button" id="console-send">Send</button>
       </div>
 
-      <label for="console-body" id="console-body-label">Request body (JSON)</label>
-      <textarea id="console-body" rows="6" spellcheck="false"></textarea>
+      <div id="console-fields" class="console-fields"></div>
+      <label class="raw-toggle" id="console-raw-label" hidden>
+        <input type="checkbox" id="console-raw"> Edit as raw JSON
+      </label>
+
+      <label for="console-body" id="console-body-label" hidden>Request body (JSON)</label>
+      <textarea id="console-body" rows="6" spellcheck="false" hidden></textarea>
 
       <div id="console-file-row" class="form-row" hidden>
         <input id="console-file" type="file" accept=".zip,application/zip">

@@ -335,6 +335,53 @@ label {
 .console-row { align-items: stretch; }
 .console-row #console-endpoint { flex: 1; }
 
+.console-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  margin-top: 0.5rem;
+}
+.console-fields .cfield {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.console-fields .cfield label {
+  font-size: 0.78rem;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--muted);
+}
+.console-fields .cfield .req { color: var(--accent); }
+.console-fields input,
+.console-fields textarea {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--panel-2);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 0.55rem 0.7rem;
+  font-size: 0.95rem;
+  font-family: inherit;
+  outline: none;
+  resize: vertical;
+}
+.console-fields input:focus,
+.console-fields textarea:focus { border-color: var(--accent); }
+
+.raw-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--muted);
+  cursor: pointer;
+}
+.raw-toggle input { width: auto; }
+
 #console-send {
   background: var(--accent);
   border: none;
