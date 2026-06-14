@@ -396,9 +396,13 @@ def build_two_objective_deck():
 def test_deck_structure_and_notes():
     deck = build_two_objective_deck()
     titles = [slide_title(s) for s in deck.slides]
-    # title, overview, obj1 explanation, obj1 example, obj2 explanation, obj2 example, references
-    assert len(deck.slides) == 7
+    # title, overview, case study, obj1 explanation, obj1 example, obj2 explanation,
+    # obj2 example, references
+    assert len(deck.slides) == 8
     assert any("Intro to Python" in t for t in titles)
+    # Case study is slide 3, right after title + overview, before any concept slides.
+    assert titles[2].startswith("Case Study:")
+    assert sum(t.startswith("Case Study:") for t in titles) == 1
     assert "Variables" in titles and "Loops" in titles  # clean topic titles, no "Objective N:"
     assert sum(t.startswith("Example") for t in titles) == 2
     assert "References" in titles

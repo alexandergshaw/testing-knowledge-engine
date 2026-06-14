@@ -81,6 +81,13 @@ slide is extracted from cited sources.
   alongside regular Wikipedia — its Basic-English prose (short sentences,
   common words) competes sentence-for-sentence in ranking, so the plainest
   phrasing tends to win when a topic has both.
+- Slide 3 of every deck is a **real-world case study**
+  ([knowledge/case_study.py](knowledge/case_study.py)): a curated, *source-backed*
+  incident (e.g. the 2017 Equifax breach, the Mars Climate Orbiter) chosen
+  deterministically by matching the module's title/objectives to a domain, with
+  a general-CS fallback so every deck gets one. No LLM means no hallucinated or
+  misdated events — each is a documented incident, cited (Wikipedia) in the
+  speaker notes.
 - For a **programming** lecture, each programming concept the lecture covers
   gets a fixed **four-slide unit** — `Example:` → `Walkthrough:` → `Practice:`
   → `Answer:` — right after its concept slide, de-duplicated to the first

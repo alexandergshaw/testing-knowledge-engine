@@ -36,7 +36,7 @@ from .slides import (
     set_notes,
 )
 from .synthesize import FALLBACK_ANSWER, sanitize_layman, synthesize
-from . import concept_library
+from . import case_study, concept_library
 
 log = logging.getLogger(__name__)
 
@@ -698,6 +698,19 @@ def _add_concept_unit(deck, unit, footer, register):
     register(unit)
 
 
+def _add_case_study(deck, title, results, footer):
+    """Add the single, deterministically chosen real-world case-study slide. No
+    code; the real source is cited in the speaker notes so the claim is checkable
+    (we never fabricate an event — curated facts only)."""
+    case = case_study.case_study_for(title, " ".join(result.objective for result in results))
+    source = case.get("source")
+    notes = ["Talking points:", "Open with this real-world story to motivate the module."]
+    if source:
+        notes.append(f"Source: {source['title']} — {source['url']}")
+    notes.append("Stick to the established facts; do not embellish.")
+    add_bullet_slide(deck, case["title"], case["bullets"], notes="\n".join(notes), footer=footer)
+
+
 def build_module_deck(title, results):
     deck = new_deck()
     footer = title or "Module Lecture"
@@ -710,6 +723,10 @@ def build_module_deck(title, results):
         [f"{i}. {clean_title(_topic_title(result.objective))}" for i, result in enumerate(results, 1)],
         footer=footer,
     )
+
+    # A real-world case study to motivate the module — deterministic, curated,
+    # and cited (slide 3, before any concept slides).
+    _add_case_study(deck, title, results, footer)
 
     refs, ref_order = {}, []
 

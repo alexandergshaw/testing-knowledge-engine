@@ -22,12 +22,51 @@ A deck is `{ "presentationTitle": "string", "slides": [ ... ] }`.
 
 ## 2. Deck-level ordering
 
-1. **Slide 1 — Title / overview.** Lists the key topics/objectives. No code.
-2. **Body.** Walk the objectives in order. Each objective produces a **concept
+1. **Title slide.** The module title.
+2. **Module Overview.** Lists the key topics/objectives. No code.
+3. **Case Study** (§2a). One real-world case study, before any concept slides.
+4. **Body.** Walk the objectives in order. Each objective produces a **concept
    slide** (prose, no code); if that concept is a coding concept, the concept
    slide is **immediately followed by a fixed 4-slide unit** (§3).
-3. Non-coding concepts produce just the concept slide (no unit).
-4. (Optional) a references/sources slide at the end.
+5. Non-coding concepts produce just the concept slide (no unit).
+6. (Optional) a references/sources slide at the end.
+
+```
+Slide 1: Title
+Slide 2: Module Overview
+Slide 3: Case Study
+Slide 4+: body
+   per coding concept:     Concept → Example → Walkthrough → Practice → Answer
+   per non-coding concept: Concept
+(optional) References / sources
+```
+
+## 2a. The case-study slide
+
+Exactly **one** case-study slide per deck, placed right after the overview and
+before any concept slides. It motivates the module with a real, well-known
+event. Applies to **every** deck — coding or not; there is no conditional skip.
+
+- **Title** must begin with the literal prefix `Case Study:` (a role marker,
+  like `Example:` / `Walkthrough:` / `Practice:` / `Answer:`), followed by a
+  short event name — e.g. `Case Study: 2017 Equifax Breach`.
+- **Bullets** describe a specific, real, widely-documented event about the
+  module's subject: who (organization/product) and roughly when (year/era),
+  what happened, and a final bullet that ties the story to what students are
+  about to learn. Preference: a dramatic cautionary failure/breach over an
+  impressive build (failures motivate fundamentals best). Same bullet budget as
+  the rest of the deck (≤4 on the lecture path).
+- **No code.** It renders as an ordinary no-code bullets slide.
+- **Factual integrity.** Never invent or misdate an event.
+
+**How this engine does it (deterministic, source-backed).** Unlike an LLM —
+which can hallucinate or misdate events and can't synthesize a real story after
+the fact — the Course Engine selects from a curated library of real incidents
+([knowledge/case_study.py](../knowledge/case_study.py)). The module's title +
+objectives are matched against domain keywords (security, ML/AI, OS/concurrency,
+databases, web, algorithms); an unmatched module falls back to a general
+computer-science incident, so every deck gets one. Each case study carries a
+real Wikipedia citation, surfaced in the slide's speaker notes.
 
 ## 3. The coding-concept unit
 
