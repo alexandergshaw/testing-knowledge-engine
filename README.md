@@ -77,7 +77,10 @@ slide is extracted from cited sources.
   with no LLM. Anything not curated falls back to retrieval
   (`select_sources`/`fetch` → BM25 `rank` → extractive `synthesize`), with
   encyclopedic markup (LaTeX `{\displaystyle …}`, citation residue) stripped by
-  `sanitize_layman`.
+  `sanitize_layman`. The fallback queries **Simple English Wikipedia**
+  alongside regular Wikipedia — its Basic-English prose (short sentences,
+  common words) competes sentence-for-sentence in ranking, so the plainest
+  phrasing tends to win when a topic has both.
 - For a **programming** lecture, each programming concept the lecture covers
   gets its own "Example: \<Concept\>" slide pairing a caption with a code block
   (curated clean code, else fetched), de-duplicated to the first objective that

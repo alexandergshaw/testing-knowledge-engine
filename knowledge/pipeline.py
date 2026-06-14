@@ -10,7 +10,12 @@ from .query import analyze
 from .ranking import rank
 from .sources.duckduckgo import DuckDuckGoSource
 from .sources.stackexchange import StackExchangeSource
-from .sources.wikipedia import WikipediaSource, WikiversitySource, WiktionarySource
+from .sources.wikipedia import (
+    SimpleWikipediaSource,
+    WikipediaSource,
+    WikiversitySource,
+    WiktionarySource,
+)
 from .synthesize import FALLBACK_ANSWER, synthesize
 
 log = logging.getLogger(__name__)
@@ -20,6 +25,7 @@ FETCH_TIMEOUT_SECONDS = 10
 _cache = TTLCache(ttl_seconds=3600)
 
 _wikipedia = WikipediaSource()
+_simple_wikipedia = SimpleWikipediaSource()
 _wikiversity = WikiversitySource()
 _wiktionary = WiktionarySource()
 _stackoverflow = StackExchangeSource("stackoverflow", "Stack Overflow", 0.9)
@@ -31,7 +37,10 @@ def select_sources(query):
     """Rule-based domain routing. Generalists always run; specialists are
     added when the question looks like their domain. Misrouting is cheap —
     BM25 ranking buries irrelevant results."""
-    sources = [_wikipedia, _duckduckgo]
+    # Simple English Wikipedia rides with the generalists: when it has an
+    # article its plain-language prose competes sentence-for-sentence with the
+    # regular encyclopedia, which is what the layman lecture fallback wants.
+    sources = [_wikipedia, _simple_wikipedia, _duckduckgo]
     if query.is_education:
         # Curriculum/teaching questions: Stack Overflow's code Q&A is noise
         # here — the educators' site and Wikiversity courses are the experts.

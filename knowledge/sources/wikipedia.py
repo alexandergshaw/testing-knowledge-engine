@@ -236,6 +236,20 @@ class WikipediaSource(MediaWikiSource):
     pass
 
 
+class SimpleWikipediaSource(MediaWikiSource):
+    # Same MediaWiki API, but articles are written in Basic/Simple English —
+    # short sentences, common words. The cleanest source of *layman* prose when
+    # the curated concept library has no entry, which is exactly what lecture
+    # decks want. Prose only: list/curriculum harvesting stays off so it never
+    # competes with Wikiversity/Wikibooks on the curriculum path; it only ever
+    # contributes clean intro sentences to the candidate pool.
+    host = "simple.wikipedia.org"
+    name = "Simple English Wikipedia"
+    trust = 1.0
+    intro_only = True
+    harvest_lists = False
+
+
 class WikibooksSource(MediaWikiSource):
     host = "en.wikibooks.org"
     name = "Wikibooks"
