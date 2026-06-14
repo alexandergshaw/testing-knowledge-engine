@@ -80,6 +80,14 @@ As with everything here, quality is bounded by what the sources provide:
 well-documented objectives yield rich slides; obscure ones get a thinner slide
 flagged low-confidence in the notes. Nothing is fabricated.
 
+For a **programming** lecture (most objectives are code-flagged, or the title
+names a language), example slides are made **only for objectives that actually
+deal with code** — those that name a code construct (loop, function, class…),
+not merely a language or its history — and each such slide pairs an explanatory
+sentence with a pertinent code block. Conceptual topics in a programming lecture
+get an explanation slide but no example slide; non-programming lectures keep
+prose examples.
+
 Every returned deck (this endpoint and the per-unit lectures in
 `/api/v1/materials`) is built to one house style in
 [knowledge/slides.py](knowledge/slides.py): 16:9, a consistent professional

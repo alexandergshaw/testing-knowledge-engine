@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 
 from .cache import TTLCache
 from .pipeline import fetch, select_sources
-from .query import STOPWORDS, analyze, tokenize
+from .query import _CODE_PATTERN, _PROGRAMMING_TERMS, STOPWORDS, analyze, tokenize
 from .ranking import rank, split_sentences
 from .slides import (
     add_bullet_slide,
@@ -162,28 +162,86 @@ def _code_lines(block):
     return lines[:MAX_CODE_LINES]
 
 
-def extract_examples(query, passages, ranked, limit=MAX_EXAMPLES_PER_OBJECTIVE):
-    """Worked examples for an objective: code snippets for programming topics,
-    then prose sentences that explicitly introduce an example, then a best-effort
-    fallback to the top explanation sentence."""
+# Concrete code constructs/skills you would actually show code FOR. A topic
+# that merely names a language ("history of Python") is NOT one of these, so it
+# won't get a code example slide even though it's programming-flagged.
+_CODE_CONSTRUCTS = frozenset(
+    """loop loops function functions method methods variable variables array
+    arrays list lists dict dictionary dictionaries set sets tuple tuples string
+    strings class classes object objects inheritance polymorphism encapsulation
+    recursion pointer pointers thread threads async await promise callback
+    closure decorator decorators lambda iterator iterators generator generators
+    exception exceptions error errors syntax regex query join api json xml file
+    files io algorithm algorithms compile compiler debugging conditional
+    conditionals operator operators expression expressions statement statements
+    parameter parameters argument arguments boolean integer float""".split()
+)
+
+
+def _deals_with_code(query):
+    """True only when the objective names an actual code construct/skill (or
+    contains code syntax) — not merely a language name or a meta/historical
+    aspect of programming."""
+    tokens = {tokenize(token)[0] for token in query.keywords if tokenize(token)}
+    tokens |= set(tokenize(query.raw))
+    return bool(tokens & _CODE_CONSTRUCTS) or bool(_CODE_PATTERN.search(query.raw))
+
+
+def _best_example_text(ranked):
+    """A self-contained sentence to caption a code example — a 'for example…'
+    sentence if one exists, otherwise the top-ranked explanation."""
+    for sentence in ranked:
+        if _EXAMPLE_MARKERS.search(sentence.text):
+            return sentence.text
+    return ranked[0].text if ranked else ""
+
+
+def _code_examples(query, passages, ranked, limit):
+    """Code-block examples (topics that actually deal with code), each captioned
+    with a pertinent explanatory sentence so the slide carries words AND code.
+    Code is taken preferentially from the passages backing the top-ranked
+    sentences."""
+    if not _deals_with_code(query):
+        return []
+    caption = _best_example_text(ranked)
+    ordered, seen = [], set()
+    for passage in [s.passage for s in ranked] + list(passages):
+        if id(passage) not in seen:
+            seen.add(id(passage))
+            ordered.append(passage)
+
     examples = []
-    if query.is_programming:
-        for passage in passages:
-            for block in passage.code or []:
-                lines = _code_lines(block)
-                if lines:
-                    examples.append(
-                        {
-                            "kind": "code",
-                            "lines": lines,
-                            "title": passage.title,
-                            "url": passage.url,
-                            "source": passage.source,
-                        }
-                    )
-                    break
-            if examples:
+    for passage in ordered:
+        for block in passage.code or []:
+            lines = _code_lines(block)
+            if lines:
+                examples.append(
+                    {
+                        "kind": "code",
+                        "text": caption,
+                        "lines": lines,
+                        "title": passage.title,
+                        "url": passage.url,
+                        "source": passage.source,
+                    }
+                )
                 break
+        if len(examples) >= limit:
+            break
+    return examples
+
+
+def extract_examples(
+    query, passages, ranked, programming_lecture=False, limit=MAX_EXAMPLES_PER_OBJECTIVE
+):
+    """Worked examples for an objective.
+
+    Programming lecture: only code topics get an example, and each pairs a
+    pertinent explanatory sentence with a code block — conceptual topics return
+    []. Otherwise: code (if any) + 'for example…' prose + a best-effort fallback."""
+    examples = _code_examples(query, passages, ranked, limit)
+    if programming_lecture:
+        return examples[:limit]
 
     for sentence in ranked:
         if len(examples) >= limit:
@@ -239,7 +297,17 @@ def context_terms(title):
     return " ".join(t for t in tokenize(title) if t not in _CONTEXT_STOPWORDS)
 
 
-def _build_objective(objective, context=""):
+def is_programming_lecture(objectives, title=""):
+    """The lecture is 'programming' when most objectives are code-flagged or the
+    title names a programming language/term — used to gate example slides to
+    code topics only."""
+    queries = [analyze(objective) for objective in objectives]
+    return sum(q.is_programming for q in queries) * 2 >= len(objectives) or bool(
+        set(tokenize(title)) & _PROGRAMMING_TERMS
+    )
+
+
+def _build_objective(objective, context="", programming_lecture=False):
     query = analyze(objective)
     if context:
         # Bias retrieval without changing the slide's objective text.
@@ -252,15 +320,15 @@ def _build_objective(objective, context=""):
     return ObjectiveResult(
         objective=objective,
         points=_to_points(synth["answer"]),
-        examples=extract_examples(query, passages, ranked),
+        examples=extract_examples(query, passages, ranked, programming_lecture),
         citations=synth["citations"],
         confidence=synth["confidence"],
     )
 
 
-def _safe_build(objective, context=""):
+def _safe_build(objective, context="", programming_lecture=False):
     try:
-        return _build_objective(objective, context)
+        return _build_objective(objective, context, programming_lecture)
     except Exception:
         log.warning("objective failed: %s", objective, exc_info=True)
         return ObjectiveResult(objective)
@@ -354,8 +422,15 @@ def build_module_deck(title, results):
                 deck, f"Example — {_short(result.objective)}", footer=footer
             )
             if example["kind"] == "code":
-                add_text_box(example_slide, "Worked example:", top=1.5, height=1.4, size=18)
-                add_code_box(example_slide, example["lines"])
+                # Words + code: explain the example, then show the code beneath.
+                add_text_box(
+                    example_slide,
+                    example.get("text") or "Worked example:",
+                    top=1.5,
+                    height=1.5,
+                    size=18,
+                )
+                add_code_box(example_slide, example["lines"], top=3.2)
             else:
                 add_text_box(example_slide, example["text"], top=1.6, height=4.0, size=20)
             set_notes(example_slide, _example_notes(example))
@@ -383,9 +458,14 @@ def build_lecture_deck(objectives_text, title="Module Lecture"):
     if cached is not None:
         return cached
 
+    # A programming lecture restricts example slides to code topics (with code).
+    programming_lecture = is_programming_lecture(objectives, title)
+
     context = context_terms(title) if title != "Module Lecture" else ""
     with ThreadPoolExecutor(max_workers=min(len(objectives), 6)) as executor:
-        results = list(executor.map(lambda o: _safe_build(o, context), objectives))
+        results = list(
+            executor.map(lambda o: _safe_build(o, context, programming_lecture), objectives)
+        )
 
     payload = build_module_deck(title, results)
     summary = {

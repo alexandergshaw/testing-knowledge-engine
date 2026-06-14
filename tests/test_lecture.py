@@ -84,6 +84,58 @@ def test_extract_code_example_for_programming():
     assert examples[0]["lines"][1] == "    print(i)"
 
 
+def test_programming_lecture_code_example_has_words_and_code():
+    query = analyze("How do Python loops work?")
+    passage = make_passage(source="Stack Overflow", code=["for i in range(3):\n    print(i)"])
+    caption = ScoredSentence(
+        text="For example, a for loop iterates over each item in a sequence.",
+        tokens=[],
+        passage=passage,
+        score=5.0,
+    )
+    examples = extract_examples(query, [passage], [caption], programming_lecture=True)
+    assert len(examples) == 1
+    assert examples[0]["kind"] == "code"
+    assert examples[0]["lines"]                      # has code
+    assert "for loop" in examples[0]["text"]         # AND words
+
+
+def test_programming_lecture_skips_conceptual_topic():
+    # A non-programming objective in a programming lecture gets no example slide.
+    query = analyze("Explain the history of computing")
+    assert not query.is_programming
+    passage = make_passage()
+    sentence = ScoredSentence(text="Computing has a long history.", tokens=[], passage=passage, score=3.0)
+    assert extract_examples(query, [passage], [sentence], programming_lecture=True) == []
+
+
+def test_programming_lecture_skips_conceptual_topic_even_when_flagged():
+    # "history of Python" is programming-flagged (it names a language) but names
+    # no code construct, so it must NOT get a code example slide.
+    query = analyze("Explain the history of Python")
+    assert query.is_programming
+    passage = make_passage(source="Stack Overflow", code=["print('hi')"])
+    sentence = ScoredSentence(text="Python was created in 1991.", tokens=[], passage=passage, score=3.0)
+    assert extract_examples(query, [passage], [sentence], programming_lecture=True) == []
+
+
+def test_programming_lecture_code_topic_without_code_has_no_example():
+    query = analyze("How do Python loops work?")
+    passage = make_passage(source="Stack Overflow", code=[])  # no code retrieved
+    sentence = ScoredSentence(text="A loop repeats a block.", tokens=[], passage=passage, score=3.0)
+    assert extract_examples(query, [passage], [sentence], programming_lecture=True) == []
+
+
+def test_is_programming_lecture_detection():
+    from knowledge.lecture import is_programming_lecture
+
+    assert is_programming_lecture(["write a Python for loop", "define a function"])
+    assert is_programming_lecture(["explain the history of it"], title="Introduction to Python")
+    assert not is_programming_lecture(
+        ["explain operant conditioning", "describe classical conditioning"]
+    )
+
+
 def test_extract_prose_example_by_marker():
     query = analyze("What is cognitive dissonance?")
     passage = make_passage()
@@ -138,6 +190,7 @@ def build_two_objective_deck():
             examples=[
                 {
                     "kind": "code",
+                    "text": "For example, this loop prints 0, 1, 2.",
                     "lines": ["for i in range(3):", "    print(i)"],
                     "title": "Loops",
                     "url": "http://l",
@@ -169,6 +222,24 @@ def test_deck_examples_have_speaker_notes():
     ]
     assert any("Talking points" in n for n in notes)
     assert any("Source:" in n for n in notes)
+
+
+def test_code_example_slide_has_words_and_code():
+    deck = build_two_objective_deck()
+    example_slide = next(
+        s for s in deck.slides if s.shapes.title and s.shapes.title.text.startswith("Example")
+        and any(sh.has_text_frame and "loop prints" in sh.text_frame.text for sh in s.shapes)
+    )
+    text = "\n".join(sh.text_frame.text for sh in example_slide.shapes if sh.has_text_frame)
+    assert "For example, this loop prints" in text          # words
+    assert "for i in range(3):" in text                     # code
+    # the code lives in a monospace box
+    monospace = any(
+        sh.has_text_frame
+        and any(p.font.name == "Consolas" for p in sh.text_frame.paragraphs)
+        for sh in example_slide.shapes
+    )
+    assert monospace
 
 
 def test_deck_references_number_unique_sources():
