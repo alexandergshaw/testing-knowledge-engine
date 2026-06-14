@@ -61,7 +61,8 @@ BLOOM_VERBS = frozenset(
     predict solve construct develop differentiate recognize recognise state
     name label recall understand use write build model derive prove formulate
     assess select compute draw measure perform produce review organize
-    organise plan test debug deploy configure""".split()
+    organise plan test debug deploy configure choose provide give determine
+    show find write read""".split()
 )
 
 # Only strip a real preamble: "...will be able to[:]" / "...will learn[:]", or a
@@ -232,13 +233,46 @@ _register_concept("operator operators", "Operators")
 _register_concept("boolean booleans", "Booleans")
 
 
+# Multi-word concepts single-token matching would miss ("control structures",
+# "data types"). Checked against the raw text before single tokens.
+CONCEPT_PHRASES = {
+    "control structures": "Control Structures",
+    "control structure": "Control Structures",
+    "control flow": "Control Structures",
+    "data types": "Data Types",
+    "data type": "Data Types",
+    "numeric types": "Data Types",
+    "primitive types": "Data Types",
+    "data structures": "Data Structures",
+    "data structure": "Data Structures",
+    "object oriented": "Classes & Objects",
+    "object-oriented": "Classes & Objects",
+    "error handling": "Exceptions & Errors",
+    "exception handling": "Exceptions & Errors",
+    "regular expressions": "Regular Expressions",
+    "regular expression": "Regular Expressions",
+    "file handling": "File I/O",
+}
+
+
 def extract_concepts(query):
     """Ordered, de-duplicated canonical programming concepts named in an
-    objective's text (e.g. 'conditionals and loops' -> [Conditionals, Loops])."""
+    objective's text — multi-word ('control structures', 'data types') and
+    single-word ('conditionals and loops' -> [Conditionals, Loops])."""
+    text = query.raw.lower()
+    found = []
+    for phrase, canonical in CONCEPT_PHRASES.items():
+        position = text.find(phrase)
+        if position >= 0:
+            found.append((position, canonical))
+    for match in re.finditer(r"[a-zA-Z0-9#+]+", text):
+        canonical = CONCEPT_CANON.get(match.group(0))
+        if canonical:
+            found.append((match.start(), canonical))
+
     seen, concepts = set(), []
-    for token in tokenize(query.raw):
-        canonical = CONCEPT_CANON.get(token)
-        if canonical and canonical not in seen:
+    for _, canonical in sorted(found, key=lambda item: item[0]):
+        if canonical not in seen:
             seen.add(canonical)
             concepts.append(canonical)
     return concepts
@@ -279,6 +313,9 @@ def _concept_code(concept, language):
         return cached[0]
 
     query = analyze(f"{language} {concept} example".strip())
+    # A concept is a programming idea by construction — force Stack Overflow into
+    # the source set even if the short query string doesn't trip is_programming.
+    query.is_programming = True
     result = None
     try:
         passages = fetch(query, select_sources(query))

@@ -106,6 +106,46 @@ def test_extract_concepts_ordered_and_deduped():
     assert extract_concepts(analyze("Explain the history of Python")) == []
 
 
+def test_extract_concepts_multiword_phrases():
+    from knowledge.lecture import extract_concepts
+
+    assert extract_concepts(analyze("Implement basic control structures")) == ["Control Structures"]
+    assert extract_concepts(analyze("Choose appropriate numeric data types")) == ["Data Types"]
+    assert extract_concepts(analyze("Explain common data structures")) == ["Data Structures"]
+    # genuinely conceptual objectives still name no concept (no code slide)
+    assert extract_concepts(analyze("Describe problem-solving strategies")) == []
+    assert extract_concepts(analyze("Provide examples of computer science")) == []
+
+
+def test_parse_recognizes_choose_and_provide_verbs():
+    # "Choose"/"Provide" must start their own objectives, not merge into the prior.
+    objs = parse_objectives(
+        "Provide examples of CS. Choose numeric data types. Implement control structures."
+    )
+    assert objs == [
+        "Provide examples of CS",
+        "Choose numeric data types",
+        "Implement control structures",
+    ]
+
+
+def test_concept_code_forces_stackoverflow_retrieval(monkeypatch):
+    # A concept search string ("Data Types example") doesn't trip is_programming,
+    # so _concept_code must force it so Stack Overflow (the code source) is queried.
+    import knowledge.lecture as lecture
+
+    captured = {}
+
+    def fake_select(query):
+        captured["is_programming"] = query.is_programming
+        return []
+
+    monkeypatch.setattr(lecture, "select_sources", fake_select)
+    monkeypatch.setattr(lecture, "fetch", lambda query, sources: [])
+    lecture._concept_code("Data Types", "uniquelang-xyz")  # fresh cache key
+    assert captured["is_programming"] is True
+
+
 def test_infer_language_from_title_and_objectives():
     from knowledge.lecture import _infer_language
 
