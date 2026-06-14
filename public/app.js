@@ -114,45 +114,51 @@ function renderSchedule(data) {
   resultSection.hidden = false;
 }
 
-// Stitch the schedule into a Copilot prompt that scaffolds a week-by-week
-// student project repository. Plain templating — no AI on this side.
-function buildCopilotPrompt(data, description) {
-  const scheduleLines = data.weeks
-    .map((week) => `- Week ${week.week}: ${week.topics.join("; ")}`)
-    .join("\n");
-
-  const reviewNote = data.weeks.some((week) =>
-    week.topics.some((topic) => /^(Midterm review|Review and final)/.test(topic))
-  )
-    ? "- Review/assessment weeks become checkpoint milestones: students integrate prior weeks' work and complete a short self-assessment quiz instead of starting new material.\n"
-    : "";
-
-  return `Create a complete week-by-week educational project repository for a college course on ${data.subject}.
-
-## Course description
-${description}
-
-## Weekly topic schedule (${data.weeks.length} weeks)
-${scheduleLines}
-
-## What to generate
-- One folder per week named like \`week-01-<topic-slug>\`, each containing:
-  - \`README.md\` with the week's learning objectives, a plain-English explanation of the topic(s), and step-by-step exercises that build on previous weeks
-  - Starter code with clearly marked \`TODO\` sections for students to complete
-  - Automated tests students can run to verify their work before moving on
-- A top-level \`README.md\` with the course overview, the full schedule as a table, environment setup instructions, and grading/checkpoint guidance
-- One capstone project thread that evolves across the term: each week's exercises add a feature to the same application, so by the final week students have built one complete project that exercises every topic above
-${reviewNote}- Choose the most appropriate language and tooling for ${data.subject}, keep dependencies minimal, and make everything runnable with one setup command
-- Write for students seeing these topics for the first time: explain why each topic matters before showing how, and keep each week's workload roughly equal
-
-Generate the full directory structure and file contents.`;
+// Serialize the rendered schedule to CSV — the shape /api/v1/copilot-prompt
+// parses (and the same shape an external caller would send).
+function csvCell(value) {
+  const text = String(value ?? "");
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-copilotBuildButton.addEventListener("click", () => {
+function scheduleToCsv(data) {
+  const header = "Week,Dates,Topics,Assignment";
+  const rows = data.weeks.map((week) =>
+    [week.week, week.dates || "", (week.topics || []).join("; "), week.assignment || ""]
+      .map(csvCell)
+      .join(",")
+  );
+  return [header, ...rows].join("\n");
+}
+
+// The Copilot prompt is built by the deterministic /api/v1/copilot-prompt
+// endpoint — one source of truth shared with external API callers.
+copilotBuildButton.addEventListener("click", async () => {
   if (!lastSchedule) return;
-  copilotText.value = buildCopilotPrompt(lastSchedule, lastDescription);
-  copilotPanel.hidden = false;
-  copilotText.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  copilotBuildButton.disabled = true;
+  const label = copilotBuildButton.textContent;
+  copilotBuildButton.textContent = "Building…";
+  try {
+    const response = await fetch("/api/v1/copilot-prompt", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        schedule: scheduleToCsv(lastSchedule),
+        // subject + description give the endpoint extra language-inference signal.
+        fileName: `${lastSchedule.subject || ""} ${lastDescription || ""}`.trim().slice(0, 250),
+      }),
+    });
+    const data = await response.json();
+    copilotText.value =
+      !response.ok || data.error ? `Error: ${errorMessage(data)}` : data.prompt;
+  } catch (error) {
+    copilotText.value = "Network error — is the server running?";
+  } finally {
+    copilotBuildButton.disabled = false;
+    copilotBuildButton.textContent = label;
+    copilotPanel.hidden = false;
+    copilotText.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
 });
 
 copilotCopyButton.addEventListener("click", async () => {
