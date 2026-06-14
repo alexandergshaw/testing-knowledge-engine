@@ -215,12 +215,12 @@ def add_text_box(slide, text, top=1.75, height=1.4, size=18):
     return _text(slide, text, 0.55, top, 12.3, height, size, THEME.body, font=THEME.body_font)
 
 
-def add_code_box(slide, lines, top=3.5, height=3.3):
+def add_code_box(slide, lines, top=3.5, height=3.3, left=0.5, width=12.3):
     """A dark code block with light monospace text (Gemini style). Auto-shapes
     default to centered, vertically-centered text — fatal for code — so text is
     forced left-aligned and top-anchored, with indentation preserved."""
     box = slide.shapes.add_shape(
-        MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.5), Inches(top), Inches(12.3), Inches(height)
+        MSO_SHAPE.ROUNDED_RECTANGLE, Inches(left), Inches(top), Inches(width), Inches(height)
     )
     box.fill.solid()
     box.fill.fore_color.rgb = THEME.code_bg
@@ -242,15 +242,59 @@ def add_code_box(slide, lines, top=3.5, height=3.3):
     return box
 
 
+def _lang_label(slide, language, left, top, width=12.3):
+    if language:
+        _text(slide, language.upper(), left, top, width, 0.3, 11, THEME.accent, bold=True,
+              font=THEME.title_font)
+
+
+def _bullets_box(slide, lines, left, top, width, height, size=16):
+    """A free-standing bulleted text box (used outside the default body area —
+    e.g. the right column of a walkthrough)."""
+    box = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(width), Inches(height))
+    frame = box.text_frame
+    frame.word_wrap = True
+    for index, line in enumerate(lines):
+        paragraph = frame.paragraphs[0] if index == 0 else frame.add_paragraph()
+        paragraph.text = "•  " + line
+        paragraph.font.name = THEME.body_font
+        paragraph.font.size = Pt(size)
+        paragraph.font.color.rgb = THEME.body
+        paragraph.space_after = Pt(8)
+    return box
+
+
 def add_code_example_slide(deck, title, caption, language, lines):
     """A code example slide: caption, a blue language label, then a dark code
     block — the reference deck's 'Example: …' layout."""
     slide = _content_base(deck, title)
     if caption:
         add_text_box(slide, caption, top=1.7, height=1.2, size=18)
-    if language:
-        _text(slide, language.upper(), 0.55, 3.15, 12.3, 0.3, 11, THEME.accent, bold=True,
-              font=THEME.title_font)
+    _lang_label(slide, language, 0.55, 3.15)
+    add_code_box(slide, lines, top=3.5, height=3.3)
+    return slide
+
+
+def add_walkthrough_slide(deck, title, language, lines, bullets):
+    """A two-column walkthrough: the code on the left, a line-by-line
+    explanation (bullets) on the right, both full height to avoid clipping."""
+    slide = _content_base(deck, title)
+    code_top = 1.95
+    _lang_label(slide, language, 0.55, 1.6, width=6.3)
+    add_code_box(slide, lines, top=code_top, height=SLIDE_H - code_top - 0.4, left=0.5, width=6.3)
+    cleaned = [b for b in (clean_bullet(item) for item in bullets) if b]
+    _bullets_box(slide, cleaned, left=7.1, top=1.75, width=5.7, height=SLIDE_H - 1.75 - 0.4)
+    return slide
+
+
+def add_practice_slide(deck, title, language, lines, tasks):
+    """A practice slide: the challenge (1–2 task bullets) on top, then the
+    worked example below as a read-only reference for the student to consult.
+    The reference code is the unchanged Example snippet — never a solution."""
+    slide = _content_base(deck, title)
+    cleaned = [b for b in (clean_bullet(item) for item in tasks) if b][:2]
+    _bullets_box(slide, cleaned, left=0.55, top=1.6, width=12.3, height=1.55, size=18)
+    _lang_label(slide, language, 0.55, 3.15)
     add_code_box(slide, lines, top=3.5, height=3.3)
     return slide
 

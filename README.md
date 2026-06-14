@@ -82,9 +82,23 @@ slide is extracted from cited sources.
   common words) competes sentence-for-sentence in ranking, so the plainest
   phrasing tends to win when a topic has both.
 - For a **programming** lecture, each programming concept the lecture covers
-  gets its own "Example: \<Concept\>" slide pairing a caption with a code block
-  (curated clean code, else fetched), de-duplicated to the first objective that
-  names it.
+  gets a fixed **four-slide unit** — `Example:` → `Walkthrough:` → `Practice:`
+  → `Answer:` — right after its concept slide, de-duplicated to the first
+  objective that names it:
+  - **Example** — a correct, self-contained snippet (curated clean code, else
+    fetched) with a one-line caption.
+  - **Walkthrough** — the *same* code, two-column, with a line-by-line
+    explanation beside it.
+  - **Practice** — a small challenge (1–2 task bullets) on the same concept.
+    The code shown is the **Example snippet verbatim**, a read-only reference —
+    never starter code and never the solution.
+  - **Answer** — a *distinct*, runnable solution to that challenge.
+
+  Only the four unit slides carry code (concept/title/reference slides never
+  do); the single reference snippet is the Example's code, reused by the
+  Walkthrough and Practice slides *by construction*, so a generated practice
+  snippet can never leak the answer. Non-programming modules omit the unit
+  entirely (concept slides only).
 
 Every returned deck (this endpoint and the per-unit lectures in
 `/api/v1/materials`) is built to one house style in

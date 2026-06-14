@@ -181,32 +181,61 @@ def test_concept_code_caches_and_captions(monkeypatch):
     assert calls["n"] == 1
 
 
-def test_attach_concept_examples_one_slide_per_concept(monkeypatch):
+def test_attach_concept_examples_one_unit_per_concept():
     import knowledge.lecture as lecture
 
+    # Conditionals/Loops/Functions are all curated, so units come from the
+    # library (no network), de-duplicated and attached to the first owner.
+    results = [
+        lecture.ObjectiveResult(objective="Explain conditionals and loops"),
+        lecture.ObjectiveResult(objective="Write functions and more loops"),  # 'loops' dup
+    ]
+    lecture._attach_concept_examples(results, [r.objective for r in results], "Intro to Python")
+    concepts = [unit["concept"] for r in results for unit in r.concept_examples]
+    assert concepts == ["Conditionals", "Loops", "Functions"]  # deduped, ordered
+    # Each unit is the full 4-part shape.
+    for r in results:
+        for unit in r.concept_examples:
+            assert set(unit) >= {"example", "walkthrough", "practice", "answer"}
+    # 'Loops' attached to the FIRST objective that named it
+    assert any(unit["concept"] == "Loops" for unit in results[0].concept_examples)
+    assert all(unit["concept"] != "Loops" for unit in results[1].concept_examples)
+
+
+def test_concept_unit_fallback_builds_deterministic_unit(monkeypatch):
+    import knowledge.lecture as lecture
+
+    # An uncurated concept: retrieval supplies the example; the rest is derived.
     monkeypatch.setattr(
         lecture,
         "_concept_code",
         lambda concept, language: {
             "kind": "code",
             "concept": concept,
-            "text": f"A worked {concept.lower()} example.",
-            "lines": ["// code", "do_it()"],
+            "text": "A worked example.",
+            "lines": ["x = 1", "for i in range(x):", "    print(i)"],
             "title": concept,
             "url": "u",
             "source": "Stack Overflow",
         },
     )
-    results = [
-        lecture.ObjectiveResult(objective="Explain conditionals and loops"),
-        lecture.ObjectiveResult(objective="Write functions and more loops"),  # 'loops' dup
-    ]
-    lecture._attach_concept_examples(results, [r.objective for r in results], "Intro to Python")
-    concepts = [ex["concept"] for r in results for ex in r.concept_examples]
-    assert concepts == ["Conditionals", "Loops", "Functions"]  # deduped, ordered
-    # 'Loops' attached to the FIRST objective that named it
-    assert any(ex["concept"] == "Loops" for ex in results[0].concept_examples)
-    assert all(ex["concept"] != "Loops" for ex in results[1].concept_examples)
+    unit = lecture._concept_unit("Generators", "Python")
+    assert unit["example"]["lines"][0] == "x = 1"
+    assert len(unit["walkthrough"]) == 3                 # one line described per code line
+    assert any("Assigns a value to x" in b for b in unit["walkthrough"])
+    assert any("loop" in b.lower() for b in unit["walkthrough"])
+    assert unit["practice"] and "Recreate" in unit["practice"][0]
+
+
+def test_describe_line_recognizes_common_shapes():
+    from knowledge.lecture import _describe_line
+
+    assert _describe_line("def greet(name):").startswith("Defines the function greet")
+    assert _describe_line("class Dog:").startswith("Defines the class Dog")
+    assert "loop" in _describe_line("for i in range(3):").lower()
+    assert _describe_line("total = 5 + 2").startswith("Assigns a value to total")
+    assert _describe_line("return total").startswith("Returns")
+    assert _describe_line("") is None
 
 
 def test_is_programming_lecture_detection():
@@ -219,37 +248,81 @@ def test_is_programming_lecture_detection():
     )
 
 
-def test_concept_example_slides_render_words_and_code():
+def _slide_code(slide):
+    """The monospace code lines on a slide built by these helpers."""
+    for shape in slide.shapes:
+        if shape.has_text_frame and any(
+            p.font.name == "Courier New" for p in shape.text_frame.paragraphs
+        ):
+            return [p.text for p in shape.text_frame.paragraphs]
+    return []
+
+
+def _unit_example():
+    return {
+        "concept": "Loops",
+        "language": "Python",
+        "example": {
+            "caption": "For example, this loop prints 0, 1, 2.",
+            "lines": ["for i in range(3):", "    print(i)"],
+        },
+        "walkthrough": ["range(3) yields 0, 1, 2.", "print runs once per value."],
+        "practice": ["Print the numbers 0 to 4 with a loop."],
+        "answer": {"caption": "Looping to five.", "lines": ["for i in range(5):", "    print(i)"]},
+        "title": "",
+        "url": "",
+        "source": "Curated",
+    }
+
+
+def test_concept_unit_renders_four_slides_in_order():
     from pptx import Presentation
 
     results = [
         ObjectiveResult(
             objective="Explain loops",
             points=["A loop repeats code."],
-            concept_examples=[
-                {
-                    "kind": "code",
-                    "concept": "Loops",
-                    "text": "For example, this loop prints 0, 1, 2.",
-                    "lines": ["for i in range(3):", "    print(i)"],
-                    "title": "Loops",
-                    "url": "u",
-                    "source": "Stack Overflow",
-                }
-            ],
+            concept_examples=[_unit_example()],
             citations=[],
             confidence="high",
         )
     ]
     deck = Presentation(io.BytesIO(build_module_deck("Intro to Python", results)))
+    titles = [slide_title(s) for s in deck.slides]
+    unit_titles = [t for t in titles if t.split(":")[0] in ("Example", "Walkthrough", "Practice", "Answer")]
+    # The fixed unit, immediately consecutive and in order.
+    assert unit_titles == ["Example: Loops", "Walkthrough: Loops", "Practice: Loops", "Answer: Loops"]
+
+
+def test_concept_example_slide_renders_words_and_code():
+    from pptx import Presentation
+
+    deck = Presentation(io.BytesIO(build_module_deck("Intro to Python", [
+        ObjectiveResult(objective="Explain loops", points=["A loop repeats code."],
+                        concept_examples=[_unit_example()], citations=[], confidence="high")
+    ])))
     slide = next(s for s in deck.slides if slide_title(s) == "Example: Loops")
     text = "\n".join(sh.text_frame.text for sh in slide.shapes if sh.has_text_frame)
     assert "this loop prints" in text                       # words
     assert "for i in range(3):" in text                     # code
-    assert any(
-        sh.has_text_frame and any(p.font.name == "Courier New" for p in sh.text_frame.paragraphs)
-        for sh in slide.shapes
-    )
+    assert _slide_code(slide)                                # rendered in monospace
+
+
+def test_practice_code_is_example_reference_not_the_answer():
+    # Spec §4: walkthrough and practice both show the EXAMPLE snippet verbatim;
+    # only the answer carries its own distinct solution.
+    from pptx import Presentation
+
+    deck = Presentation(io.BytesIO(build_module_deck("Intro to Python", [
+        ObjectiveResult(objective="Explain loops", points=["A loop repeats code."],
+                        concept_examples=[_unit_example()], citations=[], confidence="high")
+    ])))
+    by_title = {slide_title(s): s for s in deck.slides}
+    example_code = _slide_code(by_title["Example: Loops"])
+    assert _slide_code(by_title["Walkthrough: Loops"]) == example_code
+    assert _slide_code(by_title["Practice: Loops"]) == example_code
+    # The answer must NOT be the reference snippet.
+    assert _slide_code(by_title["Answer: Loops"]) != example_code
 
 
 def test_extract_prose_example_by_marker():

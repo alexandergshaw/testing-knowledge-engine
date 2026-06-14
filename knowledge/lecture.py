@@ -26,8 +26,10 @@ from .slides import (
     add_code_example_slide,
     add_content_slide,
     add_list_slide,
+    add_practice_slide,
     add_text_box,
     add_title_slide,
+    add_walkthrough_slide,
     clean_title,
     deck_bytes,
     new_deck,
@@ -341,6 +343,76 @@ def _concept_code(concept, language):
     return result
 
 
+# Deterministic, no-LLM descriptions of common code-line shapes — used to build
+# a walkthrough for an *uncurated* concept whose code was retrieved from the web.
+_ASSIGN = re.compile(r"^([A-Za-z_][\w\.\[\]]*)\s*=\s*[^=]")
+
+
+def _describe_line(line):
+    """A plain-English description of one line of code, or None to skip it."""
+    text = line.strip()
+    if not text:
+        return None
+    if text.startswith("#"):
+        return f"Comment: {text.lstrip('# ').strip()}".rstrip()
+    if text.startswith(("def ", "async def ")):
+        name = re.sub(r"^(?:async\s+)?def\s+(\w+).*", r"\1", text)
+        return f"Defines the function {name}."
+    if text.startswith("class "):
+        name = re.sub(r"^class\s+(\w+).*", r"\1", text)
+        return f"Defines the class {name}."
+    if text.startswith(("for ", "while ")):
+        return "Starts a loop that repeats the indented block."
+    if text.startswith(("if ", "elif ")) or text == "else:":
+        return "Branches based on a condition."
+    if text.startswith("return"):
+        return "Returns a value to the caller."
+    if text.startswith(("import ", "from ")):
+        return "Imports code from another module."
+    if re.match(r"\w+\s*\(", text) and "print(" in text:
+        return "Prints output to the screen."
+    match = _ASSIGN.match(text)
+    if match:
+        return f"Assigns a value to {match.group(1)}."
+    return f"Runs: {text}"
+
+
+def _describe_code(lines):
+    """A best-effort line-by-line walkthrough of a retrieved code block."""
+    described = [d for d in (_describe_line(line) for line in lines) if d]
+    return described or ["Read each line and predict what it does before running it."]
+
+
+def _concept_unit(concept, language):
+    """The full Example/Walkthrough/Practice/Answer unit for one concept, or
+    None. Curated content first (instant, distinct answer); otherwise a
+    deterministic unit built around retrieved example code — the practice slide
+    reuses the example as a read-only reference, and (with no LLM to author a
+    fresh solution) the answer reuses it as the worked solution."""
+    curated = concept_library.unit_for(concept, language)
+    if curated:
+        return {"concept": concept, **curated, "title": "", "url": "", "source": "Curated"}
+
+    fetched = _concept_code(concept, language)
+    if not fetched:
+        return None
+    lines = fetched["lines"]
+    return {
+        "concept": concept,
+        "language": fetched.get("language", language),
+        "example": {"caption": fetched.get("text", ""), "lines": lines},
+        "walkthrough": _describe_code(lines),
+        "practice": [
+            f"Recreate this {concept.lower()} example yourself, from scratch.",
+            "Run it and confirm you get the same result.",
+        ],
+        "answer": {"caption": "A correct, runnable version of the example.", "lines": list(lines)},
+        "title": fetched.get("title", ""),
+        "url": fetched.get("url", ""),
+        "source": fetched.get("source", ""),
+    }
+
+
 def _best_example_text(ranked):
     """A self-contained sentence to caption a code example — a 'for example…'
     sentence if one exists, otherwise the top-ranked explanation."""
@@ -565,6 +637,67 @@ def _example_notes(example):
     return "\n".join(lines).strip()
 
 
+def _unit_source(unit):
+    """The 'Source:' line for a concept unit's speaker notes."""
+    if not unit.get("url"):
+        return "Source: Curated lecture content."
+    return f"Source: {unit.get('title', '')} ({unit.get('source', '')}) — {unit['url']}"
+
+
+def _add_concept_unit(deck, unit, footer, register):
+    """Render one coding concept as the fixed Example -> Walkthrough -> Practice
+    -> Answer unit. The example's code is the single reference snippet the
+    walkthrough and practice slides reuse (by construction, so a generated
+    practice snippet can never leak the answer); only the answer slide carries
+    its own distinct, runnable solution."""
+    concept = unit["concept"]
+    language = unit.get("language", "")
+    example = unit["example"]
+    ref_lines = example["lines"]
+    source = _unit_source(unit)
+
+    example_slide = add_code_example_slide(
+        deck,
+        f"Example: {concept}",
+        example.get("caption") or f"A worked {concept.lower()} example.",
+        language,
+        ref_lines,
+    )
+    set_notes(example_slide, f"Talking points:\nIntroduce the example, then read the code aloud.\n{source}")
+
+    walkthrough_slide = add_walkthrough_slide(
+        deck, f"Walkthrough: {concept}", language, ref_lines, unit["walkthrough"]
+    )
+    set_notes(
+        walkthrough_slide,
+        f"Talking points:\nExplain the code line by line, tying each line back to the concept.\n{source}",
+    )
+
+    practice_slide = add_practice_slide(
+        deck, f"Practice: {concept}", language, ref_lines, unit["practice"]
+    )
+    set_notes(
+        practice_slide,
+        "Talking points:\nGive students time to attempt the challenge. The code shown is the "
+        "worked example for reference only — it is not the solution.",
+    )
+
+    answer = unit["answer"]
+    answer_slide = add_code_example_slide(
+        deck,
+        f"Answer: {concept}",
+        answer.get("caption") or "A correct solution.",
+        language,
+        answer["lines"],
+    )
+    set_notes(
+        answer_slide,
+        "Talking points:\nReveal after students attempt the challenge, then compare it with their work.",
+    )
+
+    register(unit)
+
+
 def build_module_deck(title, results):
     deck = new_deck()
     footer = title or "Module Lecture"
@@ -603,17 +736,10 @@ def build_module_deck(title, results):
         for citation in result.citations:
             register(citation)
 
-        # One "Example: <Concept>" code slide per concept (words + dark code block).
-        for example in result.concept_examples:
-            slide = add_code_example_slide(
-                deck,
-                f"Example: {example['concept']}",
-                example.get("text") or f"A worked {example['concept'].lower()} example.",
-                example.get("language", ""),
-                example["lines"],
-            )
-            set_notes(slide, _example_notes(example))
-            register(example)
+        # Each coding concept the objective introduces gets a fixed 4-slide unit:
+        # Example -> Walkthrough -> Practice -> Answer.
+        for unit in result.concept_examples:
+            _add_concept_unit(deck, unit, footer, register)
 
         # Non-programming lectures: prose (or code) examples.
         for example in result.examples:
@@ -639,9 +765,9 @@ def build_module_deck(title, results):
 
 
 def _attach_concept_examples(results, objectives, title):
-    """Give each programming concept the lecture covers its own code example,
-    attached to the first objective that introduces it (de-duplicated). Concept
-    code is fetched concurrently and cached."""
+    """Give each programming concept the lecture covers its own worked-example
+    unit (Example/Walkthrough/Practice/Answer), attached to the first objective
+    that introduces it (de-duplicated). Units are built concurrently."""
     language = _infer_language(objectives, title)
     owner, order = {}, []
     for result in results:
@@ -655,27 +781,11 @@ def _attach_concept_examples(results, objectives, title):
     if not order:
         return
 
-    def example_for(concept):
-        # Curated clean code first (instant); retrieval only when not curated.
-        curated = concept_library.code_for(concept, language)
-        if curated:
-            return {
-                "kind": "code",
-                "concept": concept,
-                "text": curated["caption"],
-                "lines": curated["lines"],
-                "language": curated["language"],
-                "title": "",
-                "url": "",
-                "source": "Curated",
-            }
-        return _concept_code(concept, language)
-
     with ThreadPoolExecutor(max_workers=min(len(order), 6)) as executor:
-        examples = list(executor.map(example_for, order))
-    for concept, example in zip(order, examples):
-        if example:
-            owner[concept].concept_examples.append(example)
+        units = list(executor.map(lambda c: _concept_unit(c, language), order))
+    for concept, unit in zip(order, units):
+        if unit:
+            owner[concept].concept_examples.append(unit)
 
 
 def build_lecture_deck(objectives_text, title="Module Lecture"):
