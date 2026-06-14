@@ -12,7 +12,7 @@ import re
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
-from pptx.enum.text import PP_ALIGN
+from pptx.enum.text import MSO_ANCHOR, MSO_AUTO_SIZE, PP_ALIGN
 from pptx.util import Inches, Pt
 
 MAX_BULLETS = 6
@@ -216,7 +216,9 @@ def add_text_box(slide, text, top=1.75, height=1.4, size=18):
 
 
 def add_code_box(slide, lines, top=3.5, height=3.3):
-    """A dark code block with light monospace text (Gemini style)."""
+    """A dark code block with light monospace text (Gemini style). Auto-shapes
+    default to centered, vertically-centered text — fatal for code — so text is
+    forced left-aligned and top-anchored, with indentation preserved."""
     box = slide.shapes.add_shape(
         MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.5), Inches(top), Inches(12.3), Inches(height)
     )
@@ -226,11 +228,14 @@ def add_code_box(slide, lines, top=3.5, height=3.3):
     box.shadow.inherit = False
     frame = box.text_frame
     frame.word_wrap = True
+    frame.vertical_anchor = MSO_ANCHOR.TOP
+    frame.auto_size = MSO_AUTO_SIZE.NONE
     frame.margin_left = Inches(0.25)
     frame.margin_top = Inches(0.18)
     for index, line in enumerate(lines):
         paragraph = frame.paragraphs[0] if index == 0 else frame.add_paragraph()
-        paragraph.text = line
+        paragraph.text = line.replace("\t", "    ")
+        paragraph.alignment = PP_ALIGN.LEFT
         paragraph.font.name = THEME.mono_font
         paragraph.font.size = Pt(14)
         paragraph.font.color.rgb = THEME.code_text

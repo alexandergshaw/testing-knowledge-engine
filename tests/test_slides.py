@@ -38,6 +38,21 @@ def test_clean_bullet_makes_self_contained():
 # --- slide invariants --------------------------------------------------------
 
 
+def test_code_box_left_aligned_and_top_anchored():
+    # Auto-shapes default to centered text — code must be forced left + top.
+    from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+
+    from knowledge.slides import add_code_box, add_content_slide
+
+    deck = new_deck()
+    slide = add_content_slide(deck, "Example")
+    box = add_code_box(slide, ["def f():", "    return 1"])
+    assert box.text_frame.vertical_anchor == MSO_ANCHOR.TOP
+    for paragraph in box.text_frame.paragraphs:
+        if paragraph.text.strip():
+            assert paragraph.alignment == PP_ALIGN.LEFT
+
+
 def test_new_deck_is_widescreen():
     deck = new_deck()
     assert deck.slide_width == SLIDE_WIDTH
