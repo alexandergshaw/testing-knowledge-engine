@@ -11,7 +11,14 @@ from dataclasses import dataclass, field
 
 from .cache import TTLCache
 from .pipeline import fetch, select_sources
-from .query import _CODE_PATTERN, _PROGRAMMING_TERMS, STOPWORDS, analyze, tokenize
+from .query import (
+    _CODE_PATTERN,
+    _PROGRAMMING_TERMS,
+    STOPWORDS,
+    SUBJECT_ALIASES,
+    analyze,
+    tokenize,
+)
 from .ranking import rank, split_sentences
 from .slides import (
     add_bullet_slide,
@@ -31,10 +38,12 @@ log = logging.getLogger(__name__)
 MAX_OBJECTIVES = 20
 MAX_POINTS_PER_SLIDE = 6
 MAX_EXAMPLES_PER_OBJECTIVE = 2
+MAX_CONCEPT_SLIDES = 15
 MAX_CODE_LINES = 14
 TITLE_SHORT_LIMIT = 55
 
 _cache = TTLCache(ttl_seconds=3600)
+_concept_cache = TTLCache(ttl_seconds=3600)
 
 
 class LectureError(ValueError):
@@ -147,8 +156,9 @@ _EXAMPLE_MARKERS = re.compile(
 @dataclass
 class ObjectiveResult:
     objective: str
-    points: list = field(default_factory=list)       # explanation bullets
-    examples: list = field(default_factory=list)     # {kind, text|lines, title, url, source}
+    points: list = field(default_factory=list)            # explanation bullets
+    examples: list = field(default_factory=list)          # prose/code (non-programming lectures)
+    concept_examples: list = field(default_factory=list)  # per-concept code (programming lectures)
     citations: list = field(default_factory=list)
     confidence: str = "none"
 
@@ -185,6 +195,109 @@ def _deals_with_code(query):
     tokens = {tokenize(token)[0] for token in query.keywords if tokenize(token)}
     tokens |= set(tokenize(query.raw))
     return bool(tokens & _CODE_CONSTRUCTS) or bool(_CODE_PATTERN.search(query.raw))
+
+
+# Construct words -> a canonical, teachable concept name. Each concept the
+# lecture covers gets its own code example slide.
+CONCEPT_CANON = {}
+
+
+def _register_concept(words, canonical):
+    for word in words.split():
+        CONCEPT_CANON[word] = canonical
+
+
+_register_concept("variable variables", "Variables")
+_register_concept("function functions method methods", "Functions")
+_register_concept("loop loops iteration iterating", "Loops")
+_register_concept("conditional conditionals branching", "Conditionals")
+_register_concept("list lists array arrays", "Lists & Arrays")
+_register_concept("dict dictionary dictionaries hashmap", "Dictionaries")
+_register_concept("set sets", "Sets")
+_register_concept("tuple tuples", "Tuples")
+_register_concept("string strings", "Strings")
+_register_concept("class classes object objects oop", "Classes & Objects")
+_register_concept("inheritance polymorphism encapsulation", "Object-Oriented Design")
+_register_concept("recursion recursive", "Recursion")
+_register_concept("exception exceptions error errors", "Exceptions & Errors")
+_register_concept("file files io", "File I/O")
+_register_concept("regex", "Regular Expressions")
+_register_concept("decorator decorators", "Decorators")
+_register_concept("generator generators", "Generators")
+_register_concept("lambda lambdas", "Lambdas")
+_register_concept("closure closures", "Closures")
+_register_concept("pointer pointers", "Pointers")
+_register_concept("thread threads async await concurrency", "Concurrency")
+_register_concept("operator operators", "Operators")
+_register_concept("boolean booleans", "Booleans")
+
+
+def extract_concepts(query):
+    """Ordered, de-duplicated canonical programming concepts named in an
+    objective's text (e.g. 'conditionals and loops' -> [Conditionals, Loops])."""
+    seen, concepts = set(), []
+    for token in tokenize(query.raw):
+        canonical = CONCEPT_CANON.get(token)
+        if canonical and canonical not in seen:
+            seen.add(canonical)
+            concepts.append(canonical)
+    return concepts
+
+
+def _infer_language(objectives, title):
+    """The course's programming language (for concept code searches), from the
+    title + objectives. '' when none is named."""
+    for token in tokenize(f"{title} {' '.join(objectives)}"):
+        if token in SUBJECT_ALIASES and token not in {"go", "r"}:
+            return SUBJECT_ALIASES[token]
+    return ""
+
+
+def _first_code(passages, ranked):
+    """First usable code block, preferring passages backing the top-ranked
+    sentences. Returns (lines, passage) or (None, None)."""
+    ordered, seen = [], set()
+    for passage in [s.passage for s in ranked] + list(passages):
+        if id(passage) not in seen:
+            seen.add(id(passage))
+            ordered.append(passage)
+    for passage in ordered:
+        for block in passage.code or []:
+            lines = _code_lines(block)
+            if lines:
+                return lines, passage
+    return None, None
+
+
+def _concept_code(concept, language):
+    """A captioned code example for a single concept, retrieved on a focused
+    '<language> <concept> example' query. Cached by (concept, language); returns
+    None when no pertinent code is found."""
+    key = (concept.lower(), language.lower())
+    cached = _concept_cache.get(key)
+    if cached is not None:
+        return cached[0]
+
+    query = analyze(f"{language} {concept} example".strip())
+    result = None
+    try:
+        passages = fetch(query, select_sources(query))
+        ranked = rank(query, passages) if passages else []
+        lines, passage = _first_code(passages, ranked)
+        if lines:
+            result = {
+                "kind": "code",
+                "concept": concept,
+                "text": _best_example_text(ranked) or f"A worked {concept.lower()} example.",
+                "lines": lines,
+                "title": passage.title,
+                "url": passage.url,
+                "source": passage.source,
+            }
+    except Exception:
+        log.warning("concept code fetch failed: %s", concept, exc_info=True)
+    _concept_cache.set(key, (result,))  # cache misses too, to avoid re-fetching
+    return result
 
 
 def _best_example_text(ranked):
@@ -236,13 +349,13 @@ def extract_examples(
 ):
     """Worked examples for an objective.
 
-    Programming lecture: only code topics get an example, and each pairs a
-    pertinent explanatory sentence with a code block — conceptual topics return
-    []. Otherwise: code (if any) + 'for example…' prose + a best-effort fallback."""
-    examples = _code_examples(query, passages, ranked, limit)
+    Programming lecture: examples are driven per-concept elsewhere (see
+    `_attach_concept_examples`), so this returns []. Otherwise: code (if any) +
+    'for example…' prose + a best-effort fallback sentence."""
     if programming_lecture:
-        return examples[:limit]
+        return []
 
+    examples = _code_examples(query, passages, ranked, limit)
     for sentence in ranked:
         if len(examples) >= limit:
             break
@@ -417,6 +530,23 @@ def build_module_deck(title, results):
         for citation in result.citations:
             register(citation)
 
+        # Programming lecture: one code example slide per concept this objective
+        # introduces (words + code).
+        for example in result.concept_examples:
+            concept_slide = add_content_slide(
+                deck, f"Example: {example['concept']}", footer=footer
+            )
+            add_text_box(
+                concept_slide,
+                example.get("text") or f"A worked {example['concept'].lower()} example.",
+                top=1.5,
+                height=1.5,
+                size=18,
+            )
+            add_code_box(concept_slide, example["lines"], top=3.2)
+            set_notes(concept_slide, _example_notes(example))
+            register(example)
+
         for example in result.examples:
             example_slide = add_content_slide(
                 deck, f"Example — {_short(result.objective)}", footer=footer
@@ -446,6 +576,29 @@ def build_module_deck(title, results):
     return deck_bytes(deck)
 
 
+def _attach_concept_examples(results, objectives, title):
+    """Give each programming concept the lecture covers its own code example,
+    attached to the first objective that introduces it (de-duplicated). Concept
+    code is fetched concurrently and cached."""
+    language = _infer_language(objectives, title)
+    owner, order = {}, []
+    for result in results:
+        for concept in extract_concepts(analyze(result.objective)):
+            if concept not in owner:
+                owner[concept] = result
+                order.append(concept)
+        if len(order) >= MAX_CONCEPT_SLIDES:
+            break
+    order = order[:MAX_CONCEPT_SLIDES]
+    if not order:
+        return
+    with ThreadPoolExecutor(max_workers=min(len(order), 6)) as executor:
+        examples = list(executor.map(lambda concept: _concept_code(concept, language), order))
+    for concept, example in zip(order, examples):
+        if example:
+            owner[concept].concept_examples.append(example)
+
+
 def build_lecture_deck(objectives_text, title="Module Lecture"):
     """The /api/v1/lecture entry point: returns (pptx_bytes, summary)."""
     objectives = parse_objectives(objectives_text)
@@ -467,6 +620,9 @@ def build_lecture_deck(objectives_text, title="Module Lecture"):
             executor.map(lambda o: _safe_build(o, context, programming_lecture), objectives)
         )
 
+    if programming_lecture:
+        _attach_concept_examples(results, objectives, title)
+
     payload = build_module_deck(title, results)
     summary = {
         "title": title,
@@ -475,7 +631,7 @@ def build_lecture_deck(objectives_text, title="Module Lecture"):
             {
                 "objective": r.objective,
                 "confidence": r.confidence,
-                "examples": len(r.examples),
+                "examples": len(r.examples) + len(r.concept_examples),
             }
             for r in results
         ],

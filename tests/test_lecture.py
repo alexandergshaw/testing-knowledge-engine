@@ -84,46 +84,88 @@ def test_extract_code_example_for_programming():
     assert examples[0]["lines"][1] == "    print(i)"
 
 
-def test_programming_lecture_code_example_has_words_and_code():
+def test_programming_lecture_defers_to_concept_examples():
+    # In a programming lecture, per-objective examples are empty — concepts drive
+    # the example slides instead (see _attach_concept_examples).
     query = analyze("How do Python loops work?")
     passage = make_passage(source="Stack Overflow", code=["for i in range(3):\n    print(i)"])
-    caption = ScoredSentence(
-        text="For example, a for loop iterates over each item in a sequence.",
-        tokens=[],
-        passage=passage,
-        score=5.0,
+    assert extract_examples(query, [passage], [], programming_lecture=True) == []
+
+
+# --- concept extraction & per-concept code ----------------------------------
+
+
+def test_extract_concepts_ordered_and_deduped():
+    from knowledge.lecture import extract_concepts
+
+    concepts = extract_concepts(analyze("Explain conditionals and loops, and write functions"))
+    assert concepts == ["Conditionals", "Loops", "Functions"]
+    # synonyms collapse to the canonical name
+    assert extract_concepts(analyze("Use lists and arrays")) == ["Lists & Arrays"]
+    # a conceptual / language-only objective names no concept
+    assert extract_concepts(analyze("Explain the history of Python")) == []
+
+
+def test_infer_language_from_title_and_objectives():
+    from knowledge.lecture import _infer_language
+
+    assert _infer_language(["write a for loop"], "Introduction to Python") == "Python"
+    assert _infer_language(["write JavaScript functions"], "Web Dev") == "JavaScript"
+    assert _infer_language(["explain cognitive dissonance"], "Psychology") == ""
+
+
+def test_concept_code_caches_and_captions(monkeypatch):
+    import knowledge.lecture as lecture
+
+    calls = {"n": 0}
+
+    def fake_fetch(query, sources):
+        calls["n"] += 1
+        return [make_passage(source="Stack Overflow", code=["for i in range(3):\n    print(i)"])]
+
+    monkeypatch.setattr(lecture, "fetch", fake_fetch)
+    monkeypatch.setattr(lecture, "select_sources", lambda q: [])
+    monkeypatch.setattr(
+        lecture, "rank",
+        lambda q, passages: [
+            ScoredSentence(text="For example, a loop repeats a block.", tokens=[], passage=passages[0], score=5.0)
+        ],
     )
-    examples = extract_examples(query, [passage], [caption], programming_lecture=True)
-    assert len(examples) == 1
-    assert examples[0]["kind"] == "code"
-    assert examples[0]["lines"]                      # has code
-    assert "for loop" in examples[0]["text"]         # AND words
+
+    example = lecture._concept_code("Loops", "Python")
+    assert example["kind"] == "code" and example["concept"] == "Loops"
+    assert example["lines"][0] == "for i in range(3):"
+    assert "loop" in example["text"].lower()
+    lecture._concept_code("Loops", "Python")  # cached -> no second fetch
+    assert calls["n"] == 1
 
 
-def test_programming_lecture_skips_conceptual_topic():
-    # A non-programming objective in a programming lecture gets no example slide.
-    query = analyze("Explain the history of computing")
-    assert not query.is_programming
-    passage = make_passage()
-    sentence = ScoredSentence(text="Computing has a long history.", tokens=[], passage=passage, score=3.0)
-    assert extract_examples(query, [passage], [sentence], programming_lecture=True) == []
+def test_attach_concept_examples_one_slide_per_concept(monkeypatch):
+    import knowledge.lecture as lecture
 
-
-def test_programming_lecture_skips_conceptual_topic_even_when_flagged():
-    # "history of Python" is programming-flagged (it names a language) but names
-    # no code construct, so it must NOT get a code example slide.
-    query = analyze("Explain the history of Python")
-    assert query.is_programming
-    passage = make_passage(source="Stack Overflow", code=["print('hi')"])
-    sentence = ScoredSentence(text="Python was created in 1991.", tokens=[], passage=passage, score=3.0)
-    assert extract_examples(query, [passage], [sentence], programming_lecture=True) == []
-
-
-def test_programming_lecture_code_topic_without_code_has_no_example():
-    query = analyze("How do Python loops work?")
-    passage = make_passage(source="Stack Overflow", code=[])  # no code retrieved
-    sentence = ScoredSentence(text="A loop repeats a block.", tokens=[], passage=passage, score=3.0)
-    assert extract_examples(query, [passage], [sentence], programming_lecture=True) == []
+    monkeypatch.setattr(
+        lecture,
+        "_concept_code",
+        lambda concept, language: {
+            "kind": "code",
+            "concept": concept,
+            "text": f"A worked {concept.lower()} example.",
+            "lines": ["// code", "do_it()"],
+            "title": concept,
+            "url": "u",
+            "source": "Stack Overflow",
+        },
+    )
+    results = [
+        lecture.ObjectiveResult(objective="Explain conditionals and loops"),
+        lecture.ObjectiveResult(objective="Write functions and more loops"),  # 'loops' dup
+    ]
+    lecture._attach_concept_examples(results, [r.objective for r in results], "Intro to Python")
+    concepts = [ex["concept"] for r in results for ex in r.concept_examples]
+    assert concepts == ["Conditionals", "Loops", "Functions"]  # deduped, ordered
+    # 'Loops' attached to the FIRST objective that named it
+    assert any(ex["concept"] == "Loops" for ex in results[0].concept_examples)
+    assert all(ex["concept"] != "Loops" for ex in results[1].concept_examples)
 
 
 def test_is_programming_lecture_detection():
@@ -133,6 +175,39 @@ def test_is_programming_lecture_detection():
     assert is_programming_lecture(["explain the history of it"], title="Introduction to Python")
     assert not is_programming_lecture(
         ["explain operant conditioning", "describe classical conditioning"]
+    )
+
+
+def test_concept_example_slides_render_words_and_code():
+    from pptx import Presentation
+
+    results = [
+        ObjectiveResult(
+            objective="Explain loops",
+            points=["A loop repeats code."],
+            concept_examples=[
+                {
+                    "kind": "code",
+                    "concept": "Loops",
+                    "text": "For example, this loop prints 0, 1, 2.",
+                    "lines": ["for i in range(3):", "    print(i)"],
+                    "title": "Loops",
+                    "url": "u",
+                    "source": "Stack Overflow",
+                }
+            ],
+            citations=[],
+            confidence="high",
+        )
+    ]
+    deck = Presentation(io.BytesIO(build_module_deck("Intro to Python", results)))
+    slide = next(s for s in deck.slides if s.shapes.title and s.shapes.title.text == "Example: Loops")
+    text = "\n".join(sh.text_frame.text for sh in slide.shapes if sh.has_text_frame)
+    assert "this loop prints" in text                       # words
+    assert "for i in range(3):" in text                     # code
+    assert any(
+        sh.has_text_frame and any(p.font.name == "Consolas" for p in sh.text_frame.paragraphs)
+        for sh in slide.shapes
     )
 
 
