@@ -17,6 +17,7 @@ from .slides import (
     add_bullet_slide,
     add_code_box,
     add_content_slide,
+    add_list_slide,
     add_text_box,
     add_title_slide,
     deck_bytes,
@@ -313,11 +314,15 @@ def _example_notes(example):
 
 def build_module_deck(title, results):
     deck = new_deck()
+    footer = title or "Module Lecture"
     add_title_slide(deck, title or "Module Lecture", f"{len(results)} learning objectives")
-    add_bullet_slide(
+
+    # Agenda is reference material, not teaching bullets -> compact list slide.
+    add_list_slide(
         deck,
         "Objectives",
-        [f"{i}. {result.objective}" for i, result in enumerate(results, 1)][:12],
+        [f"{i}. {result.objective[:1].upper() + result.objective[1:]}" for i, result in enumerate(results, 1)],
+        footer=footer,
     )
 
     refs, ref_order = {}, []
@@ -333,15 +338,23 @@ def build_module_deck(title, results):
             "No reliable source was found for this objective — try rephrasing it "
             "or supplement from your own materials."
         ]
-        slide = add_bullet_slide(deck, f"Objective {index}: {_short(result.objective)}", points)
-        set_notes(slide, _explanation_notes(index, result))
+        # The two strongest points show on the slide; the rest land in notes.
+        add_bullet_slide(
+            deck,
+            f"Objective {index}: {_short(result.objective)}",
+            points,
+            notes=_explanation_notes(index, result),
+            footer=footer,
+        )
         for citation in result.citations:
             register(citation)
 
         for example in result.examples:
-            example_slide = add_content_slide(deck, f"Example — {_short(result.objective)}")
+            example_slide = add_content_slide(
+                deck, f"Example — {_short(result.objective)}", footer=footer
+            )
             if example["kind"] == "code":
-                add_text_box(example_slide, "Worked example:", top=1.4, height=1.6, size=18)
+                add_text_box(example_slide, "Worked example:", top=1.5, height=1.4, size=18)
                 add_code_box(example_slide, example["lines"])
             else:
                 add_text_box(example_slide, example["text"], top=1.6, height=4.0, size=20)
@@ -349,10 +362,11 @@ def build_module_deck(title, results):
             register(example)
 
     if ref_order:
-        add_bullet_slide(
+        add_list_slide(
             deck,
             "References",
-            [f"[{refs[_ref_key(item)]}] {item['title']} — {item['source']}" for item in ref_order][:15],
+            [f"[{refs[_ref_key(item)]}] {item['title']} — {item['source']}" for item in ref_order],
+            footer=footer,
         )
     return deck_bytes(deck)
 

@@ -80,6 +80,14 @@ As with everything here, quality is bounded by what the sources provide:
 well-documented objectives yield rich slides; obscure ones get a thinner slide
 flagged low-confidence in the notes. Nothing is fabricated.
 
+Every returned deck (this endpoint and the per-unit lectures in
+`/api/v1/materials`) is built to one house style in
+[knowledge/slides.py](knowledge/slides.py): 16:9, a consistent professional
+theme (fonts, accent color, footer with slide number), Title-Cased
+self-contained titles, and **at most two self-contained bullets per content
+slide** — anything beyond that is moved into the slide's speaker notes, and
+agenda/reference lists use a compact non-bullet slide.
+
 ```sh
 curl -X POST http://localhost:5050/api/v1/lecture \
   -H "Content-Type: application/json" \

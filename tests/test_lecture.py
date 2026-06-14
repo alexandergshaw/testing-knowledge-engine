@@ -176,7 +176,9 @@ def test_deck_references_number_unique_sources():
     references = next(
         s for s in deck.slides if s.shapes.title and s.shapes.title.text == "References"
     )
-    body = references.placeholders[1].text_frame.text
+    body = "\n".join(
+        shape.text_frame.text for shape in references.shapes if shape.has_text_frame
+    )
     assert "Variable" in body and "Loops" in body
 
 

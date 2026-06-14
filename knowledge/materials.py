@@ -19,11 +19,16 @@ from dataclasses import dataclass, field
 
 from docx import Document
 from docx.shared import Pt as DocxPt
-from pptx import Presentation
-from pptx.util import Inches, Pt
 
-from .slides import add_bullet_slide as _add_bullet_slide
-from .slides import add_code_box as _add_code_box
+from .slides import (
+    add_bullet_slide,
+    add_code_box,
+    add_content_slide,
+    add_text_box,
+    add_title_slide,
+    deck_bytes,
+    new_deck,
+)
 
 MAX_ZIP_ENTRIES = 2000
 MAX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
@@ -320,12 +325,10 @@ def parse_project(zip_bytes):
 
 
 def build_lecture(unit):
-    """One PPTX lecture for a unit, as bytes."""
-    deck = Presentation()
-
-    title_slide = deck.slides.add_slide(deck.slide_layouts[0])
-    title_slide.shapes.title.text = f"Week {unit.week}: {unit.topic}"
-    title_slide.placeholders[1].text = unit.title
+    """One PPTX lecture for a unit, as bytes — themed, ≤2 bullets per slide."""
+    deck = new_deck()
+    footer = f"Week {unit.week} · {unit.topic}"
+    add_title_slide(deck, f"Week {unit.week}: {unit.topic}", unit.title)
 
     objectives = []
     if unit.sections.get("Learning target"):
@@ -333,50 +336,45 @@ def build_lecture(unit):
     objectives.extend(f"Understand {c['name']}" for c in unit.concepts)
     if not objectives:
         objectives = [f"Work through this week's unit: {unit.topic}"]
-    _add_bullet_slide(deck, "This week's goals", objectives[:7])
+    add_bullet_slide(deck, "This week's goals", objectives, footer=footer)
 
     for concept in unit.concepts[:MAX_CONCEPT_SLIDES]:
-        slide = deck.slides.add_slide(deck.slide_layouts[5])
-        slide.shapes.title.text = concept["name"]
-        box = slide.shapes.add_textbox(Inches(0.7), Inches(1.4), Inches(8.6), Inches(1.9))
-        frame = box.text_frame
-        frame.word_wrap = True
-        frame.text = concept["explanation"]
-        frame.paragraphs[0].font.size = Pt(18)
+        slide = add_content_slide(deck, concept["name"], footer=footer)
+        add_text_box(slide, concept["explanation"], top=1.5, height=1.9, size=18)
         if concept["example"]:
-            _add_code_box(slide, concept["example"])
+            add_code_box(slide, concept["example"])
 
     if unit.tasks or unit.steps:
-        _add_bullet_slide(
+        items = unit.tasks or unit.steps
+        add_bullet_slide(
             deck,
             "Your task this week",
-            [f"{i}. {t}" for i, t in enumerate(unit.tasks or unit.steps, 1)][:7],
-            sub_bullets=[f"Rule: {r}" for r in unit.rules][:5],
+            [f"{i}. {task}" for i, task in enumerate(items, 1)],
+            notes=("Rules:\n" + "\n".join(f"- {rule}" for rule in unit.rules)) if unit.rules else "",
+            footer=footer,
         )
 
     if unit.tests:
-        _add_bullet_slide(
+        add_bullet_slide(
             deck,
             "How you'll be graded",
-            ["The automated tests check that:"]
-            + [f"• {humanize_test(t)}" for t in unit.tests][:8]
-            + ["Run the tests yourself before submitting!"],
+            [
+                "Your work is graded automatically by the unit's tests.",
+                "Run the tests yourself before submitting.",
+            ],
+            notes="The tests check that:\n"
+            + "\n".join(f"- {humanize_test(test)}" for test in unit.tests),
+            footer=footer,
         )
 
-    if unit.sections.get("Starter workflow (GUI-only)") or unit.sections.get("Starter workflow"):
-        workflow = unit.sections.get("Starter workflow (GUI-only)") or unit.sections.get(
-            "Starter workflow"
-        )
-        bullets = [
-            line.lstrip("-* ").strip()
-            for line in workflow.splitlines()
-            if line.strip()
-        ]
-        _add_bullet_slide(deck, "Workflow reminder", bullets[:7])
+    workflow = unit.sections.get("Starter workflow (GUI-only)") or unit.sections.get(
+        "Starter workflow"
+    )
+    if workflow:
+        bullets = [line.lstrip("-* ").strip() for line in workflow.splitlines() if line.strip()]
+        add_bullet_slide(deck, "Workflow reminder", bullets, footer=footer)
 
-    output = io.BytesIO()
-    deck.save(output)
-    return output.getvalue()
+    return deck_bytes(deck)
 
 
 def _strip_md(text):
