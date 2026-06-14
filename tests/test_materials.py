@@ -172,12 +172,11 @@ def test_build_materials_bundle_contents():
 
         deck = Presentation(io.BytesIO(bundle.read(lectures[0])))
         assert len(deck.slides) >= 5  # title, goals, 2 concepts, task/grading
-        # Every content slide (body placeholder) carries at most 2 bullets.
+        # Every content slide carries at most MAX_BULLETS bullets.
+        from knowledge.slides import MAX_BULLETS, slide_bullets
+
         for slide in deck.slides:
-            for placeholder in slide.placeholders:
-                if placeholder.placeholder_format.idx == 1 and placeholder.has_text_frame:
-                    bullets = [p for p in placeholder.text_frame.paragraphs if p.text.strip()]
-                    assert len(bullets) <= 2
+            assert len(slide_bullets(slide)) <= MAX_BULLETS
 
         intro = _docx_text(bundle.read([n for n in lms if "week-01" in n][0]))
         assert ("Heading 1", "Week 1: Variables, I/O, Branching") in intro

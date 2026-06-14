@@ -69,33 +69,28 @@ slide is extracted from cited sources.
 `knowledge/lecture.py`:
 - `parse_objectives` is format-agnostic (inline numbered/bulleted lists, lead-in
   prose, run-on action-verb sentences, or a single objective).
-- Each objective drives one retrieval (reusing the engine's
-  `select_sources`/`fetch` → BM25 `rank` → extractive `synthesize`) for the
-  explanation, plus `extract_examples` for worked examples — Stack Overflow code
-  snippets for programming topics, "for example…" sentences otherwise.
-- The module title biases each objective's search toward the module's domain, so
-  "for loop" in an *Intro to Python* module resolves to the programming sense.
-
-As with everything here, quality is bounded by what the sources provide:
-well-documented objectives yield rich slides; obscure ones get a thinner slide
-flagged low-confidence in the notes. Nothing is fabricated.
-
-For a **programming** lecture (most objectives are code-flagged, or the title
-names a language), example slides are **per programming concept**: each idea the
-lecture covers — Conditionals, Loops, Functions, Lists & Arrays, Dictionaries,
-Classes & Objects, … — gets its own "Example: \<Concept\>" slide pairing an
-explanatory sentence with a pertinent code block fetched for that concept
-(de-duplicated, so each concept appears once; a concept with no retrievable code
-is skipped). Conceptual/meta topics (e.g. "history of Python") name no concept
-and get no example slide; non-programming lectures keep prose examples.
+- **Curated content first** ([knowledge/concept_library.py](knowledge/concept_library.py)):
+  common programming concepts (Variables, Data Types, Loops, Conditionals,
+  Functions, Classes…) and intro-CS topics (Real-World CS, Problem-Solving,
+  Algorithms…) have hand-written, plain-English explanations and clean canonical
+  code — so a Python intro module reads like a polished, instructor-made deck
+  with no LLM. Anything not curated falls back to retrieval
+  (`select_sources`/`fetch` → BM25 `rank` → extractive `synthesize`), with
+  encyclopedic markup (LaTeX `{\displaystyle …}`, citation residue) stripped by
+  `sanitize_layman`.
+- For a **programming** lecture, each programming concept the lecture covers
+  gets its own "Example: \<Concept\>" slide pairing a caption with a code block
+  (curated clean code, else fetched), de-duplicated to the first objective that
+  names it.
 
 Every returned deck (this endpoint and the per-unit lectures in
 `/api/v1/materials`) is built to one house style in
-[knowledge/slides.py](knowledge/slides.py): 16:9, a consistent professional
-theme (fonts, accent color, footer with slide number), Title-Cased
-self-contained titles, and **at most two self-contained bullets per content
-slide** — anything beyond that is moved into the slide's speaker notes, and
-agenda/reference lists use a compact non-bullet slide.
+[knowledge/slides.py](knowledge/slides.py), modeled on a polished reference
+deck: 16:9, a navy header band with a white title, a light background, a
+bright-blue accent, dark code blocks (light monospace + a blue language label),
+Title-Cased self-contained titles, and up to six short layman bullets per
+content slide (overflow → speaker notes; agenda/reference lists use a compact
+non-bullet slide).
 
 ```sh
 curl -X POST http://localhost:5050/api/v1/lecture \

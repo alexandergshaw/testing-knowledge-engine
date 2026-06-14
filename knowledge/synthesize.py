@@ -27,6 +27,19 @@ _DEFINITION_OPENER = re.compile(
 )
 
 
+def sanitize_layman(text):
+    """Strip encyclopedic markup that leaks into extracted prose — LaTeX
+    (`{\\displaystyle O(n)}`), stray TeX commands, leftover braces, and the
+    spaces around inner parentheses ('O ( n )' -> 'O(n)')."""
+    text = re.sub(r"\{\\displaystyle[^{}]*\}", "", text)
+    text = re.sub(r"\\[a-zA-Z]+", "", text)
+    text = re.sub(r"\{[^{}]*\}", "", text)
+    text = re.sub(r"\(\s+", "(", text)
+    text = re.sub(r"\s+\)", ")", text)
+    text = re.sub(r"\s+([,.;:])", r"\1", text)
+    return re.sub(r"\s{2,}", " ", text).strip()
+
+
 def jaccard(a, b):
     set_a, set_b = set(a), set(b)
     if not set_a or not set_b:

@@ -23,15 +23,18 @@ from .ranking import rank, split_sentences
 from .slides import (
     add_bullet_slide,
     add_code_box,
+    add_code_example_slide,
     add_content_slide,
     add_list_slide,
     add_text_box,
     add_title_slide,
+    clean_title,
     deck_bytes,
     new_deck,
     set_notes,
 )
-from .synthesize import FALLBACK_ANSWER, synthesize
+from .synthesize import FALLBACK_ANSWER, sanitize_layman, synthesize
+from . import concept_library
 
 log = logging.getLogger(__name__)
 
@@ -325,8 +328,9 @@ def _concept_code(concept, language):
             result = {
                 "kind": "code",
                 "concept": concept,
-                "text": _best_example_text(ranked) or f"A worked {concept.lower()} example.",
+                "text": sanitize_layman(_best_example_text(ranked)) or f"A worked {concept.lower()} example.",
                 "lines": lines,
+                "language": language,
                 "title": passage.title,
                 "url": passage.url,
                 "source": passage.source,
@@ -457,19 +461,35 @@ def is_programming_lecture(objectives, title=""):
     )
 
 
+def _curated_explanation(objective):
+    """Hand-written layman bullets for a concept or intro-CS topic, or None."""
+    for concept in extract_concepts(analyze(objective)):
+        bullets = concept_library.explanation_for(concept)
+        if bullets:
+            return bullets
+    topic = concept_library.match_topic(objective)
+    return concept_library.explanation_for(topic) if topic else None
+
+
 def _build_objective(objective, context="", programming_lecture=False):
+    # Prefer curated, Gemini-quality layman content — no network, no jargon.
+    curated = _curated_explanation(objective)
+    if curated is not None:
+        return ObjectiveResult(objective=objective, points=curated, citations=[], confidence="high")
+
+    # Fallback: retrieve, synthesize, and strip encyclopedic markup.
     query = analyze(objective)
     if context:
-        # Bias retrieval without changing the slide's objective text.
         query.search_terms = f"{query.search_terms} {context}".strip()
     passages = fetch(query, select_sources(query))
     if not passages:
         return ObjectiveResult(objective)
     ranked = rank(query, passages)
     synth = synthesize(query, ranked)
+    points = [p for p in (sanitize_layman(point) for point in _to_points(synth["answer"])) if p]
     return ObjectiveResult(
         objective=objective,
-        points=_to_points(synth["answer"]),
+        points=points,
         examples=extract_examples(query, passages, ranked, programming_lecture),
         citations=synth["citations"],
         confidence=synth["confidence"],
@@ -492,6 +512,21 @@ def _short(text):
     if len(text) <= TITLE_SHORT_LIMIT:
         return text
     return text[: TITLE_SHORT_LIMIT - 1].rstrip() + "…"
+
+
+_TITLE_FILLER = re.compile(r"^(?:appropriate|examples of|how to|the|a|an)\s+", re.IGNORECASE)
+
+
+def _topic_title(objective):
+    """A clean topic title from an objective: drop the leading action verb and a
+    little filler ('Choose appropriate numeric data types' -> 'Numeric Data
+    Types', 'Provide examples of Computer Science...' -> 'Computer Science...')."""
+    text = objective.strip()
+    match = re.match(r"^(\w+)\s+(.*)$", text)
+    if match and match.group(1).lower() in BLOOM_VERBS:
+        text = match.group(2)
+    text = _TITLE_FILLER.sub("", text)
+    return text.strip() or objective
 
 
 def _ref_key(item):
@@ -535,19 +570,21 @@ def build_module_deck(title, results):
     footer = title or "Module Lecture"
     add_title_slide(deck, title or "Module Lecture", f"{len(results)} learning objectives")
 
-    # Agenda is reference material, not teaching bullets -> compact list slide.
+    # Module overview (agenda) — clean topic titles, compact list slide.
     add_list_slide(
         deck,
-        "Objectives",
-        [f"{i}. {result.objective[:1].upper() + result.objective[1:]}" for i, result in enumerate(results, 1)],
+        "Module Overview",
+        [f"{i}. {clean_title(_topic_title(result.objective))}" for i, result in enumerate(results, 1)],
         footer=footer,
     )
 
     refs, ref_order = {}, []
 
     def register(item):
+        # Only retrieved sources (with a URL) become references — curated content
+        # isn't cited.
         key = _ref_key(item)
-        if key[0] and key not in refs:
+        if item.get("url") and key not in refs:
             refs[key] = len(refs) + 1
             ref_order.append(item)
 
@@ -556,10 +593,9 @@ def build_module_deck(title, results):
             "No reliable source was found for this objective — try rephrasing it "
             "or supplement from your own materials."
         ]
-        # The two strongest points show on the slide; the rest land in notes.
         add_bullet_slide(
             deck,
-            f"Objective {index}: {_short(result.objective)}",
+            _topic_title(result.objective),
             points,
             notes=_explanation_notes(index, result),
             footer=footer,
@@ -567,39 +603,28 @@ def build_module_deck(title, results):
         for citation in result.citations:
             register(citation)
 
-        # Programming lecture: one code example slide per concept this objective
-        # introduces (words + code).
+        # One "Example: <Concept>" code slide per concept (words + dark code block).
         for example in result.concept_examples:
-            concept_slide = add_content_slide(
-                deck, f"Example: {example['concept']}", footer=footer
-            )
-            add_text_box(
-                concept_slide,
+            slide = add_code_example_slide(
+                deck,
+                f"Example: {example['concept']}",
                 example.get("text") or f"A worked {example['concept'].lower()} example.",
-                top=1.5,
-                height=1.5,
-                size=18,
+                example.get("language", ""),
+                example["lines"],
             )
-            add_code_box(concept_slide, example["lines"], top=3.2)
-            set_notes(concept_slide, _example_notes(example))
+            set_notes(slide, _example_notes(example))
             register(example)
 
+        # Non-programming lectures: prose (or code) examples.
         for example in result.examples:
             example_slide = add_content_slide(
                 deck, f"Example — {_short(result.objective)}", footer=footer
             )
             if example["kind"] == "code":
-                # Words + code: explain the example, then show the code beneath.
-                add_text_box(
-                    example_slide,
-                    example.get("text") or "Worked example:",
-                    top=1.5,
-                    height=1.5,
-                    size=18,
-                )
-                add_code_box(example_slide, example["lines"], top=3.2)
+                add_text_box(example_slide, example.get("text") or "Worked example:", top=1.7, height=1.3, size=18)
+                add_code_box(example_slide, example["lines"], top=3.5)
             else:
-                add_text_box(example_slide, example["text"], top=1.6, height=4.0, size=20)
+                add_text_box(example_slide, example["text"], top=1.7, height=4.5, size=18)
             set_notes(example_slide, _example_notes(example))
             register(example)
 
@@ -629,8 +654,25 @@ def _attach_concept_examples(results, objectives, title):
     order = order[:MAX_CONCEPT_SLIDES]
     if not order:
         return
+
+    def example_for(concept):
+        # Curated clean code first (instant); retrieval only when not curated.
+        curated = concept_library.code_for(concept, language)
+        if curated:
+            return {
+                "kind": "code",
+                "concept": concept,
+                "text": curated["caption"],
+                "lines": curated["lines"],
+                "language": curated["language"],
+                "title": "",
+                "url": "",
+                "source": "Curated",
+            }
+        return _concept_code(concept, language)
+
     with ThreadPoolExecutor(max_workers=min(len(order), 6)) as executor:
-        examples = list(executor.map(lambda concept: _concept_code(concept, language), order))
+        examples = list(executor.map(example_for, order))
     for concept, example in zip(order, examples):
         if example:
             owner[concept].concept_examples.append(example)

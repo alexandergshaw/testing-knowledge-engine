@@ -1,37 +1,41 @@
-"""Shared python-pptx slide builders plus a professional theme, used by both
-the project-materials lectures (materials.py) and the objectives-driven module
-lectures (lecture.py).
+"""Shared python-pptx slide builders + the lecture theme, mimicking the
+reference "Gemini" deck: a navy header band with a white title, a light
+background, bright-blue accents, and dark code blocks with a language label.
 
-House style for every returned deck:
-- 16:9, a consistent professional theme (fonts, accent color, footer).
-- Title-Cased, self-contained slide titles.
-- At most TWO self-contained bullets per content slide; any overflow is moved
-  into the slide's speaker notes so nothing is lost.
-- Agenda/reference enumerations use a compact non-bullet list slide instead.
-"""
+House rules: 16:9, Title-Cased self-contained titles, up to six short
+self-contained bullets per content slide (overflow → speaker notes), compact
+non-bullet list slides for agendas/references."""
 
 import io
 import re
 
 from pptx import Presentation
-from pptx.enum.shapes import MSO_SHAPE
 from pptx.dml.color import RGBColor
+from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Pt
 
-MAX_BULLETS = 2
-SLIDE_WIDTH = Inches(13.333)
-SLIDE_HEIGHT = Inches(7.5)
+MAX_BULLETS = 6
+SLIDE_W = 13.333
+SLIDE_H = 7.5
+SLIDE_WIDTH = Inches(SLIDE_W)
+SLIDE_HEIGHT = Inches(SLIDE_H)
+HEADER_H = 1.4
+BLANK_LAYOUT = 6
 
 
 class Theme:
     title_font = "Calibri"
     body_font = "Calibri"
-    mono_font = "Consolas"
-    accent = RGBColor(0x2F, 0x5B, 0x9E)        # professional blue
-    title_color = RGBColor(0x1A, 0x2A, 0x44)
-    body_color = RGBColor(0x23, 0x2A, 0x35)
-    muted_color = RGBColor(0x8A, 0x90, 0x9C)
-    background = RGBColor(0xFF, 0xFF, 0xFF)
+    mono_font = "Courier New"
+    header = RGBColor(0x1A, 0x27, 0x44)        # navy header band / title slide bg
+    background = RGBColor(0xF4, 0xF6, 0xFB)     # light content background
+    accent = RGBColor(0x25, 0x63, 0xEB)        # bright blue
+    body = RGBColor(0x1E, 0x29, 0x3B)          # dark slate body text
+    on_header = RGBColor(0xFF, 0xFF, 0xFF)      # white title text
+    muted = RGBColor(0x64, 0x74, 0x8B)
+    code_bg = RGBColor(0x0F, 0x17, 0x2A)        # dark code block
+    code_text = RGBColor(0xE2, 0xE8, 0xF0)      # light code text
 
 
 THEME = Theme()
@@ -46,8 +50,8 @@ _SMALL_WORDS = {
 
 
 def clean_title(text):
-    """Trim, drop trailing punctuation, and Title-Case a heading while keeping
-    acronyms / mixed-case tokens (Python, I/O, HTML) intact."""
+    """Trim, drop trailing punctuation, Title-Case while keeping acronyms /
+    mixed-case tokens (Python, I/O, HTML) intact."""
     text = re.sub(r"\s+", " ", str(text)).strip().rstrip(".,;:!")
     words = text.split(" ")
     out = []
@@ -56,20 +60,21 @@ def clean_title(text):
         if not word:
             continue
         if (len(word) > 1 and any(c.isupper() for c in word[1:])) or (word.isupper() and len(word) > 1):
-            out.append(word)  # preserve Python, I/O, HTML, acronyms
+            out.append(word)
         elif not edge and word.lower() in _SMALL_WORDS:
             out.append(word.lower())
         else:
-            out.append(word[:1].upper() + word[1:].lower())
+            # Capitalize across hyphens: "problem-solving" -> "Problem-Solving".
+            out.append("-".join(part[:1].upper() + part[1:].lower() for part in word.split("-")))
     return " ".join(out)[:90]
 
 
 def clean_bullet(text):
-    """Make a bullet stand on its own: strip leading list/citation markers,
-    capitalize, and ensure terminal punctuation."""
+    """Make a bullet stand alone: strip leading list/citation markers,
+    capitalize, ensure terminal punctuation."""
     text = re.sub(r"\s+", " ", str(text)).strip()
-    text = re.sub(r"^(?:[-*•–]|\d+[.)])\s*", "", text)  # leading markers
-    text = re.sub(r"\s*\[\d+\]", "", text)              # [n] citation markers
+    text = re.sub(r"^(?:[-*•–]|\d+[.)])\s*", "", text)
+    text = re.sub(r"\s*\[\d+\]", "", text)
     text = text.strip()
     if not text:
         return ""
@@ -79,64 +84,58 @@ def clean_bullet(text):
     return text
 
 
-# --- theme application -------------------------------------------------------
+# --- low-level shape helpers -------------------------------------------------
 
 
-def _apply_background(slide):
+def _blank(deck):
+    return deck.slides.add_slide(deck.slide_layouts[BLANK_LAYOUT])
+
+
+def _fill_background(slide, color):
     fill = slide.background.fill
     fill.solid()
-    fill.fore_color.rgb = THEME.background
+    fill.fore_color.rgb = color
 
 
-def _accent_bar(slide):
-    bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, SLIDE_WIDTH, Inches(0.16))
-    bar.fill.solid()
-    bar.fill.fore_color.rgb = THEME.accent
-    bar.line.fill.background()
-    bar.shadow.inherit = False
+def _rect(slide, x, y, w, h, color):
+    shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(h))
+    shape.fill.solid()
+    shape.fill.fore_color.rgb = color
+    shape.line.fill.background()
+    shape.shadow.inherit = False
+    return shape
 
 
-def _style_title(slide, size=30):
-    title = slide.shapes.title
-    if title is None:
-        return
-    for paragraph in title.text_frame.paragraphs:
-        paragraph.font.name = THEME.title_font
-        paragraph.font.size = Pt(size)
-        paragraph.font.bold = True
-        paragraph.font.color.rgb = THEME.title_color
-        for run in paragraph.runs:
-            run.font.name = THEME.title_font
-            run.font.size = Pt(size)
-            run.font.bold = True
-            run.font.color.rgb = THEME.title_color
-
-
-def _add_footer(deck, slide, footer):
-    number = len(deck.slides)
-    text = f"{footer}  ·  {number}" if footer else str(number)
-    box = slide.shapes.add_textbox(Inches(0.4), Inches(7.05), Inches(12.5), Inches(0.35))
-    paragraph = box.text_frame.paragraphs[0]
+def _text(slide, text, x, y, w, h, size, color, bold=False, font=None, align=PP_ALIGN.LEFT):
+    box = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
+    frame = box.text_frame
+    frame.word_wrap = True
+    frame.margin_left = Inches(0)
+    frame.margin_right = Inches(0)
+    paragraph = frame.paragraphs[0]
     paragraph.text = text
-    paragraph.font.size = Pt(10)
-    paragraph.font.name = THEME.body_font
-    paragraph.font.color.rgb = THEME.muted_color
-
-
-def _decorate(deck, slide, footer):
-    _apply_background(slide)
-    _accent_bar(slide)
-    _style_title(slide)
-    _add_footer(deck, slide, footer)
-
-
-def _style_body_paragraph(paragraph, size, font=None, color=None):
+    paragraph.alignment = align
     paragraph.font.name = font or THEME.body_font
     paragraph.font.size = Pt(size)
-    paragraph.font.color.rgb = color or THEME.body_color
+    paragraph.font.bold = bold
+    paragraph.font.color.rgb = color
+    return box
 
 
-# --- slide builders ----------------------------------------------------------
+def _content_base(deck, title):
+    """A content slide: light background, navy header band with white title, a
+    thin blue accent line under it and a short blue left rail (Gemini style)."""
+    slide = _blank(deck)
+    _fill_background(slide, THEME.background)
+    _rect(slide, 0, 0, SLIDE_W, HEADER_H, THEME.header)
+    _rect(slide, 0, HEADER_H, SLIDE_W, 0.06, THEME.accent)
+    _rect(slide, 0, HEADER_H, 0.08, SLIDE_H - HEADER_H, THEME.accent)
+    _text(slide, clean_title(title), 0.45, 0.28, 12.4, 0.95, 26, THEME.on_header, bold=True,
+          font=THEME.title_font)
+    return slide
+
+
+# --- public builders ---------------------------------------------------------
 
 
 def new_deck():
@@ -147,32 +146,38 @@ def new_deck():
 
 
 def add_title_slide(deck, title, subtitle=""):
-    slide = deck.slides.add_slide(deck.slide_layouts[0])
-    slide.shapes.title.text = clean_title(title)
+    slide = _blank(deck)
+    _fill_background(slide, THEME.header)
+    _rect(slide, 0, 4.6, SLIDE_W, 0.10, THEME.accent)   # horizontal accent
+    _rect(slide, 0, 0, 0.20, SLIDE_H, THEME.accent)     # left accent rail
+    _text(slide, clean_title(title), 0.7, 2.2, 12.0, 2.0, 42, THEME.on_header, bold=True,
+          font=THEME.title_font)
     if subtitle:
-        slide.placeholders[1].text = subtitle
-        for paragraph in slide.placeholders[1].text_frame.paragraphs:
-            _style_body_paragraph(paragraph, 20, color=THEME.muted_color)
-    _apply_background(slide)
-    _accent_bar(slide)
-    _style_title(slide, size=40)
+        _text(slide, subtitle, 0.7, 4.9, 12.0, 0.8, 20, RGBColor(0xCA, 0xDC, 0xFC),
+              font=THEME.body_font)
     return slide
 
 
-def add_bullet_slide(deck, heading, bullets, notes="", footer=None):
-    """A content slide with at most two self-contained bullets. Bullets beyond
-    two (and any extra `notes`) go to the slide's speaker notes."""
-    slide = deck.slides.add_slide(deck.slide_layouts[1])
-    slide.shapes.title.text = clean_title(heading)
+def _body_paragraphs(slide, lines, top=1.75, size=18, bullet=True):
+    box = slide.shapes.add_textbox(Inches(0.55), Inches(top), Inches(12.3), Inches(SLIDE_H - top - 0.4))
+    frame = box.text_frame
+    frame.word_wrap = True
+    for index, line in enumerate(lines):
+        paragraph = frame.paragraphs[0] if index == 0 else frame.add_paragraph()
+        paragraph.text = ("•  " + line) if bullet else line
+        paragraph.font.name = THEME.body_font
+        paragraph.font.size = Pt(size)
+        paragraph.font.color.rgb = THEME.body
+        paragraph.space_after = Pt(10)
+    return box
 
+
+def add_bullet_slide(deck, heading, bullets, notes="", footer=None):
+    """A content slide with up to MAX_BULLETS short, self-contained bullets;
+    any overflow (plus extra notes) goes to the slide's speaker notes."""
+    slide = _content_base(deck, heading)
     cleaned = [b for b in (clean_bullet(item) for item in bullets) if b]
-    shown = cleaned[:MAX_BULLETS]
-    body = slide.placeholders[1].text_frame
-    body.clear()
-    for index, bullet in enumerate(shown):
-        paragraph = body.paragraphs[0] if index == 0 else body.add_paragraph()
-        paragraph.text = bullet
-        _style_body_paragraph(paragraph, 24)
+    _body_paragraphs(slide, cleaned[:MAX_BULLETS])
 
     note_parts = []
     overflow = cleaned[MAX_BULLETS:]
@@ -182,53 +187,86 @@ def add_bullet_slide(deck, heading, bullets, notes="", footer=None):
         note_parts.append(notes)
     if note_parts:
         set_notes(slide, "\n\n".join(note_parts))
-
-    _decorate(deck, slide, footer)
     return slide
 
 
 def add_list_slide(deck, heading, items, footer=None):
-    """A compact, non-bullet list (small font) for agendas and references —
-    reference material, exempt from the two-bullet rule."""
-    slide = deck.slides.add_slide(deck.slide_layouts[5])
-    slide.shapes.title.text = clean_title(heading)
-    box = slide.shapes.add_textbox(Inches(0.7), Inches(1.5), Inches(12), Inches(5.3))
+    """Compact non-bullet list (small font) for agendas and references."""
+    slide = _content_base(deck, heading)
+    box = slide.shapes.add_textbox(Inches(0.55), Inches(1.75), Inches(12.3), Inches(5.1))
     frame = box.text_frame
     frame.word_wrap = True
     for index, item in enumerate(items):
         paragraph = frame.paragraphs[0] if index == 0 else frame.add_paragraph()
         paragraph.text = str(item)
-        _style_body_paragraph(paragraph, 16)
-    _decorate(deck, slide, footer)
+        paragraph.font.name = THEME.body_font
+        paragraph.font.size = Pt(16)
+        paragraph.font.color.rgb = THEME.body
+        paragraph.space_after = Pt(6)
     return slide
 
 
 def add_content_slide(deck, title, footer=None):
-    """Title-only slide we populate with custom text/code boxes (0 bullets)."""
-    slide = deck.slides.add_slide(deck.slide_layouts[5])
-    slide.shapes.title.text = clean_title(title)
-    _decorate(deck, slide, footer)
-    return slide
+    """A themed content slide we populate with custom text/code boxes."""
+    return _content_base(deck, title)
 
 
-def add_text_box(slide, text, top=1.5, height=1.9, size=18):
-    box = slide.shapes.add_textbox(Inches(0.7), Inches(top), Inches(12), Inches(height))
+def add_text_box(slide, text, top=1.75, height=1.4, size=18):
+    return _text(slide, text, 0.55, top, 12.3, height, size, THEME.body, font=THEME.body_font)
+
+
+def add_code_box(slide, lines, top=3.5, height=3.3):
+    """A dark code block with light monospace text (Gemini style)."""
+    box = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.5), Inches(top), Inches(12.3), Inches(height)
+    )
+    box.fill.solid()
+    box.fill.fore_color.rgb = THEME.code_bg
+    box.line.fill.background()
+    box.shadow.inherit = False
     frame = box.text_frame
     frame.word_wrap = True
-    frame.text = text
-    _style_body_paragraph(frame.paragraphs[0], size)
-    return box
-
-
-def add_code_box(slide, lines, top=3.4, height=3.2):
-    box = slide.shapes.add_textbox(Inches(0.7), Inches(top), Inches(12), Inches(height))
-    frame = box.text_frame
-    frame.word_wrap = True
+    frame.margin_left = Inches(0.25)
+    frame.margin_top = Inches(0.18)
     for index, line in enumerate(lines):
         paragraph = frame.paragraphs[0] if index == 0 else frame.add_paragraph()
         paragraph.text = line
-        _style_body_paragraph(paragraph, 14, font=THEME.mono_font)
+        paragraph.font.name = THEME.mono_font
+        paragraph.font.size = Pt(14)
+        paragraph.font.color.rgb = THEME.code_text
     return box
+
+
+def add_code_example_slide(deck, title, caption, language, lines):
+    """A code example slide: caption, a blue language label, then a dark code
+    block — the reference deck's 'Example: …' layout."""
+    slide = _content_base(deck, title)
+    if caption:
+        add_text_box(slide, caption, top=1.7, height=1.2, size=18)
+    if language:
+        _text(slide, language.upper(), 0.55, 3.15, 12.3, 0.3, 11, THEME.accent, bold=True,
+              font=THEME.title_font)
+    add_code_box(slide, lines, top=3.5, height=3.3)
+    return slide
+
+
+def slide_title(slide):
+    """Title text of a slide built by these helpers (the topmost text box)."""
+    titled = [s for s in slide.shapes if s.has_text_frame and s.text_frame.text.strip()]
+    if not titled:
+        return ""
+    return min(titled, key=lambda s: s.top or 0).text_frame.text.strip()
+
+
+def slide_bullets(slide):
+    """The bullet lines on a content slide (the box of '•  '-prefixed lines)."""
+    for shape in slide.shapes:
+        if not shape.has_text_frame:
+            continue
+        paragraphs = [p.text for p in shape.text_frame.paragraphs if p.text.strip()]
+        if paragraphs and all(p.lstrip().startswith("•") for p in paragraphs):
+            return paragraphs
+    return []
 
 
 def set_notes(slide, text):

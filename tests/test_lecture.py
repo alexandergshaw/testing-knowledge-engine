@@ -13,6 +13,7 @@ from knowledge.lecture import (
 )
 from knowledge.query import analyze
 from knowledge.ranking import ScoredSentence
+from knowledge.slides import slide_title
 from knowledge.sources.base import Passage
 from service import PPTX_MIMETYPE
 
@@ -241,12 +242,12 @@ def test_concept_example_slides_render_words_and_code():
         )
     ]
     deck = Presentation(io.BytesIO(build_module_deck("Intro to Python", results)))
-    slide = next(s for s in deck.slides if s.shapes.title and s.shapes.title.text == "Example: Loops")
+    slide = next(s for s in deck.slides if slide_title(s) == "Example: Loops")
     text = "\n".join(sh.text_frame.text for sh in slide.shapes if sh.has_text_frame)
     assert "this loop prints" in text                       # words
     assert "for i in range(3):" in text                     # code
     assert any(
-        sh.has_text_frame and any(p.font.name == "Consolas" for p in sh.text_frame.paragraphs)
+        sh.has_text_frame and any(p.font.name == "Courier New" for p in sh.text_frame.paragraphs)
         for sh in slide.shapes
     )
 
@@ -321,11 +322,11 @@ def build_two_objective_deck():
 
 def test_deck_structure_and_notes():
     deck = build_two_objective_deck()
-    titles = [s.shapes.title.text for s in deck.slides if s.shapes.title]
-    # title, agenda, obj1 explanation, obj1 example, obj2 explanation, obj2 example, references
+    titles = [slide_title(s) for s in deck.slides]
+    # title, overview, obj1 explanation, obj1 example, obj2 explanation, obj2 example, references
     assert len(deck.slides) == 7
     assert any("Intro to Python" in t for t in titles)
-    assert any(t.startswith("Objective 1") for t in titles)
+    assert "Variables" in titles and "Loops" in titles  # clean topic titles, no "Objective N:"
     assert sum(t.startswith("Example") for t in titles) == 2
     assert "References" in titles
 
@@ -342,8 +343,8 @@ def test_deck_examples_have_speaker_notes():
 def test_code_example_slide_has_words_and_code():
     deck = build_two_objective_deck()
     example_slide = next(
-        s for s in deck.slides if s.shapes.title and s.shapes.title.text.startswith("Example")
-        and any(sh.has_text_frame and "loop prints" in sh.text_frame.text for sh in s.shapes)
+        s for s in deck.slides
+        if any(sh.has_text_frame and "loop prints" in sh.text_frame.text for sh in s.shapes)
     )
     text = "\n".join(sh.text_frame.text for sh in example_slide.shapes if sh.has_text_frame)
     assert "For example, this loop prints" in text          # words
@@ -351,7 +352,7 @@ def test_code_example_slide_has_words_and_code():
     # the code lives in a monospace box
     monospace = any(
         sh.has_text_frame
-        and any(p.font.name == "Consolas" for p in sh.text_frame.paragraphs)
+        and any(p.font.name == "Courier New" for p in sh.text_frame.paragraphs)
         for sh in example_slide.shapes
     )
     assert monospace
@@ -359,9 +360,7 @@ def test_code_example_slide_has_words_and_code():
 
 def test_deck_references_number_unique_sources():
     deck = build_two_objective_deck()
-    references = next(
-        s for s in deck.slides if s.shapes.title and s.shapes.title.text == "References"
-    )
+    references = next(s for s in deck.slides if slide_title(s) == "References")
     body = "\n".join(
         shape.text_frame.text for shape in references.shapes if shape.has_text_frame
     )
