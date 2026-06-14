@@ -13,6 +13,11 @@
 
 * { box-sizing: border-box; }
 
+html { -webkit-text-size-adjust: 100%; }
+
+/* Nothing should be able to force horizontal scrolling on a small screen. */
+input, select, textarea, img, svg { max-width: 100%; }
+
 body {
   margin: 0;
   background: var(--bg);
@@ -27,11 +32,11 @@ body {
   width: min(760px, 100%);
   display: flex;
   flex-direction: column;
-  padding: 1.5rem 1rem 3rem;
-  gap: 1.25rem;
+  padding: clamp(1rem, 3vw, 1.5rem) clamp(0.75rem, 3vw, 1rem) 3rem;
+  gap: clamp(0.9rem, 2.5vw, 1.25rem);
 }
 
-.header h1 { margin: 0; font-size: 1.5rem; }
+.header h1 { margin: 0; font-size: clamp(1.25rem, 5vw, 1.5rem); }
 .tagline { margin: 0.25rem 0 0; color: var(--muted); font-size: 0.9rem; }
 
 .panel {
@@ -69,6 +74,7 @@ label {
 
 .form-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   gap: 1rem;
   margin-top: 0.4rem;
@@ -81,12 +87,20 @@ label {
   gap: 0.4rem;
 }
 
-.schedule-options { flex-wrap: wrap; }
+/* The option fields flow into as many columns as fit, each filling its cell —
+   4 across on desktop, collapsing to 2 then 1 as the screen narrows. */
+.schedule-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  align-items: end;
+  gap: 0.9rem;
+}
 
 #weeks,
 #start-date,
 #tests,
 #term {
+  width: 100%;
   background: var(--bg);
   border: 1px solid var(--panel-2);
   border-radius: 10px;
@@ -96,9 +110,6 @@ label {
   font-family: inherit;
   outline: none;
 }
-#weeks { width: 7rem; }
-#tests { width: 6rem; }
-#term { width: 9rem; }
 #weeks:focus,
 #start-date:focus,
 #tests:focus,
@@ -131,7 +142,7 @@ label {
   gap: 1rem;
   margin-bottom: 0.75rem;
 }
-.result-head h2 { margin: 0; font-size: 1.15rem; }
+.result-head h2 { margin: 0; font-size: 1.15rem; min-width: 0; overflow-wrap: anywhere; }
 
 .confidence {
   font-size: 0.72rem;
@@ -170,7 +181,9 @@ label {
   padding-top: 0.1rem;
 }
 
-.week-main { flex: 1; }
+/* min-width:0 lets a flex child shrink below its content width instead of
+   forcing the row wider; overflow-wrap breaks long unspaced tokens/URLs. */
+.week-main { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .week-topics .extra { color: var(--muted); }
 .week-assignment {
   color: var(--muted);
@@ -189,6 +202,7 @@ label {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
+  overflow-wrap: anywhere;
 }
 .citations a { color: var(--accent); text-decoration: none; }
 .citations a:hover { text-decoration: underline; }
@@ -254,6 +268,7 @@ label {
 
 #project-zip {
   flex: 1;
+  min-width: 0;
   color: var(--muted);
   font-size: 0.9rem;
 }
@@ -442,4 +457,49 @@ label {
   25%  { content: "."; }
   50%  { content: ".."; }
   75%  { content: "..."; }
+}
+
+/* --- Responsive: phones and small tablets --------------------------------- */
+@media (max-width: 640px) {
+  /* Full-width, comfortably tappable primary buttons. */
+  #generate,
+  #lecture-generate,
+  #materials-generate,
+  #console-send,
+  #copilot-build {
+    width: 100%;
+    margin-left: 0;
+  }
+  button { min-height: 44px; }
+
+  /* 16px on every control keeps iOS Safari from auto-zooming on focus. The
+     !important is needed to beat the per-field id/class font sizes set above
+     (e.g. #api-key, .console-fields input), which otherwise win on specificity. */
+  input, select, textarea { font-size: 16px !important; }
+
+  /* Two-up rows stack and left-align instead of cramping or overflowing. */
+  .result-head,
+  .copilot-head,
+  .console-meta,
+  .console-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+  }
+  .result-head { align-items: flex-start; }
+  .console-meta { gap: 0.2rem; }
+
+  /* Schedule rows: the week label sits above its topics rather than taking a
+     wide fixed column on a narrow screen. */
+  .week-list li { flex-direction: column; gap: 0.15rem; }
+  .week-num { flex-basis: auto; padding-top: 0; }
+}
+
+@media (max-width: 380px) {
+  .panel, .result, .status { padding: 1rem; }
+  .copilot-head, .result-head { gap: 0.4rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status.loading::after { animation: none; content: "…"; }
 }
