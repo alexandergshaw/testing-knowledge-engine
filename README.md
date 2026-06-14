@@ -81,13 +81,19 @@ slide is extracted from cited sources.
   alongside regular Wikipedia — its Basic-English prose (short sentences,
   common words) competes sentence-for-sentence in ranking, so the plainest
   phrasing tends to win when a topic has both.
+- A deck's structure follows its **profile** (`classify_subject`): `programming`
+  (per-concept code units) or `conceptual` (everything else — sciences, social
+  science, humanities). The profile is deterministic (title/objective keywords),
+  no model.
 - Slide 3 of every deck is a **real-world case study**
   ([knowledge/case_study.py](knowledge/case_study.py)): a curated, *source-backed*
-  incident (e.g. the 2017 Equifax breach, the Mars Climate Orbiter) chosen
-  deterministically by matching the module's title/objectives to a domain, with
-  a general-CS fallback so every deck gets one. No LLM means no hallucinated or
-  misdated events — each is a documented incident, cited (Wikipedia) in the
-  speaker notes.
+  incident chosen deterministically by matching the module to a domain — across
+  computing (e.g. the 2017 Equifax breach) **and** academic fields (psychology →
+  the Stanford Prison Experiment, biology, economics, physics, chemistry,
+  statistics) — with a STEM default (Mars Climate Orbiter) and a subject-neutral
+  default (Gutenberg's printing press) so every deck gets exactly one. No LLM
+  means no hallucinated or misdated events — each is a documented incident, cited
+  (Wikipedia) in the speaker notes.
 - For a **programming** lecture, each programming concept the lecture covers
   gets a fixed **four-slide unit** — `Example:` → `Walkthrough:` → `Practice:`
   → `Answer:` — right after its concept slide, de-duplicated to the first
@@ -104,8 +110,14 @@ slide is extracted from cited sources.
   Only the four unit slides carry code (concept/title/reference slides never
   do); the single reference snippet is the Example's code, reused by the
   Walkthrough and Practice slides *by construction*, so a generated practice
-  snippet can never leak the answer. Non-programming modules omit the unit
-  entirely (concept slides only).
+  snippet can never leak the answer.
+- For a **conceptual** lecture (any non-programming subject), each objective
+  instead gets, after its concept slide: an **`Illustration:`** slide (a real,
+  cited "for example…" pulled from the sources, when one is found) and a
+  **`Check Your Understanding:`** slide of deterministic review questions
+  (define → explain → apply → relate-to-the-next-topic), with model answers and
+  citations in the speaker notes. No code, no LLM — the questions are templated
+  from each objective's topic.
 
 Every returned deck (this endpoint and the per-unit lectures in
 `/api/v1/materials`) is built to one house style in

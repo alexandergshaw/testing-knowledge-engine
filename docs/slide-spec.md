@@ -36,8 +36,8 @@ Slide 1: Title
 Slide 2: Module Overview
 Slide 3: Case Study
 Slide 4+: body
-   per coding concept:     Concept → Example → Walkthrough → Practice → Answer
-   per non-coding concept: Concept
+   programming objective: Concept → Example → Walkthrough → Practice → Answer
+   conceptual objective:  Concept → Illustration → Check Your Understanding
 (optional) References / sources
 ```
 
@@ -63,10 +63,13 @@ event. Applies to **every** deck — coding or not; there is no conditional skip
 which can hallucinate or misdate events and can't synthesize a real story after
 the fact — the Course Engine selects from a curated library of real incidents
 ([knowledge/case_study.py](../knowledge/case_study.py)). The module's title +
-objectives are matched against domain keywords (security, ML/AI, OS/concurrency,
-databases, web, algorithms); an unmatched module falls back to a general
-computer-science incident, so every deck gets one. Each case study carries a
-real Wikipedia citation, surfaced in the slide's speaker notes.
+objectives are matched against domain keywords across computing (security,
+ML/AI, OS/concurrency, databases, web, algorithms) **and** academic fields
+(psychology, biology, economics, physics, chemistry, statistics). An unmatched
+module falls back to a STEM default (Mars Climate Orbiter) for
+computing/engineering subjects, otherwise a subject-neutral default (Gutenberg's
+printing press), so every deck gets exactly one. Each case study carries a real
+Wikipedia citation, surfaced in the slide's speaker notes.
 
 ## 3. The coding-concept unit
 
@@ -121,10 +124,21 @@ significant — downstream logic uses them to identify slide roles.
 - The Walkthrough legitimately uses its full budget for the line-by-line
   explanation.
 
-## 6. Non-programming modules
+## 6. Non-programming (conceptual) modules
 
-If the module teaches no programming: omit `code`/`codeLanguage` everywhere and
-omit the entire Example/Walkthrough/Practice/Answer unit — concept slides only.
+A module that teaches no programming uses the **conceptual profile**: no
+`code`/`codeLanguage` anywhere, and the Example/Walkthrough/Practice/Answer unit
+is replaced by a parallel rhythm after each concept slide:
+
+| Title prefix    | Purpose                                                        | `bullets`                                  |
+|-----------------|---------------------------------------------------------------|--------------------------------------------|
+| `Illustration:` | A concrete real-world example of the concept                  | one retrieved, cited "for example…" sentence (omitted if none found) |
+| `Check Your Understanding:` | Review questions on the concept                    | deterministic prompts (define → explain → apply → relate); model answers + sources in the speaker notes |
+
+The questions are templated from the objective's topic (no LLM); the "relate"
+question links it to the next objective's topic. The profile is chosen by
+`classify_subject` (`programming` vs `conceptual`); quantitative subjects
+currently use the conceptual profile.
 
 ## 7. Rendering (this repo)
 

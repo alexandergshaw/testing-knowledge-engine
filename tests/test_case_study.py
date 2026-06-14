@@ -8,7 +8,7 @@ from knowledge.slides import slide_title
 
 
 def test_every_case_study_is_well_formed():
-    entries = list(case_study.CASE_STUDIES.values()) + [case_study.DEFAULT]
+    entries = list(case_study.CASE_STUDIES.values()) + [case_study.DEFAULT, case_study.DEFAULT_GENERAL]
     for entry in entries:
         assert entry["title"].startswith("Case Study:")
         assert 1 <= len(entry["bullets"]) <= 4          # lecture-deck bullet budget
@@ -25,10 +25,25 @@ def test_domain_matching_picks_the_specific_study():
     assert case_study.case_study_for("Algorithms", "sorting and complexity") is case_study.CASE_STUDIES["algorithms"]
 
 
-def test_unmatched_subject_falls_back_to_default():
-    # A generic intro module names no domain — still gets a real case study.
+def test_non_programming_fields_match():
+    assert case_study.case_study_for("Introduction to Psychology") is case_study.CASE_STUDIES["psychology"]
+    assert case_study.case_study_for("Cell Biology", "genetics and evolution") is case_study.CASE_STUDIES["biology"]
+    assert case_study.case_study_for("Macroeconomics") is case_study.CASE_STUDIES["economics"]
+    assert case_study.case_study_for("Classical Mechanics", "thermodynamics") is case_study.CASE_STUDIES["physics"]
+    assert case_study.case_study_for("Organic Chemistry") is case_study.CASE_STUDIES["chemistry"]
+    assert case_study.case_study_for("Intro to Statistics", "regression and sampling") is case_study.CASE_STUDIES["statistics"]
+
+
+def test_unmatched_stem_falls_back_to_stem_default():
+    # Computing modules with no specific domain still get the STEM default.
     assert case_study.case_study_for("Introduction to Python") is case_study.DEFAULT
     assert case_study.case_study_for("Foundations of Computer Science") is case_study.DEFAULT
+
+
+def test_unmatched_non_stem_falls_back_to_general_default():
+    # A humanities module never opens with a computing disaster.
+    assert case_study.case_study_for("World History", "the Renaissance and Enlightenment") is case_study.DEFAULT_GENERAL
+    assert case_study.case_study_for("Introduction to Philosophy") is case_study.DEFAULT_GENERAL
 
 
 def test_case_study_slide_is_slide_three_with_no_code():

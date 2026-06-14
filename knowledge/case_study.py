@@ -5,13 +5,18 @@ Unlike an LLM, which can misdate or hallucinate events, every case study here is
 hand-written from an established, well-documented incident and carries a real
 Wikipedia citation (surfaced in the slide's speaker notes). Selection is
 deterministic: the module's title + objectives are matched against domain
-keywords; an unmatched module falls back to a general computer-science incident
-so that — per the spec — every deck gets exactly one case study.
+keywords; an unmatched module falls back to a STEM default (computing/engineering)
+or an otherwise subject-neutral one, so that — per the spec — every deck gets
+exactly one case study.
 
 Preference, where a domain has options: a dramatic cautionary failure/breach
 over an impressive build, because failures motivate fundamentals best. The last
 bullet always ties the story to what students are about to learn.
 """
+
+import re
+
+from .query import _PROGRAMMING_TERMS
 
 CASE_STUDIES = {
     "security": {
@@ -76,20 +81,99 @@ CASE_STUDIES = {
         ],
         "source": {"title": "2010 flash crash", "url": "https://en.wikipedia.org/wiki/2010_flash_crash"},
     },
+    # --- other academic fields ---------------------------------------------
+    "psychology": {
+        "title": "Case Study: Stanford Prison Experiment",
+        "bullets": [
+            "In 1971, a Stanford study assigned students to be 'guards' or 'prisoners' in a mock prison.",
+            "The guards quickly turned abusive and the study was halted after six of a planned fourteen days.",
+            "It became a touchstone for debates about authority, conformity, and research ethics.",
+            "It frames the questions about human behavior this module explores.",
+        ],
+        "source": {"title": "Stanford prison experiment",
+                   "url": "https://en.wikipedia.org/wiki/Stanford_prison_experiment"},
+    },
+    "biology": {
+        "title": "Case Study: Thalidomide Tragedy",
+        "bullets": [
+            "From 1957, the drug thalidomide was sold to ease morning sickness in pregnant women.",
+            "It caused severe birth defects in thousands of babies before being withdrawn around 1961.",
+            "The disaster transformed drug testing and safety regulation worldwide.",
+            "It grounds why the biology and physiology in this module matter for real lives.",
+        ],
+        "source": {"title": "Thalidomide scandal",
+                   "url": "https://en.wikipedia.org/wiki/Thalidomide_scandal"},
+    },
+    "economics": {
+        "title": "Case Study: 2008 Financial Crisis",
+        "bullets": [
+            "In 2008, the collapse of a U.S. housing bubble triggered a global financial crisis.",
+            "Major banks failed, markets crashed, and millions lost homes and jobs.",
+            "Risky mortgage lending and opaque financial products were central causes.",
+            "It shows why the economic principles in this module carry real-world stakes.",
+        ],
+        "source": {"title": "2007–2008 financial crisis",
+                   "url": "https://en.wikipedia.org/wiki/2007%E2%80%932008_financial_crisis"},
+    },
+    "physics": {
+        "title": "Case Study: Tacoma Narrows Bridge Collapse",
+        "bullets": [
+            "In 1940, the Tacoma Narrows Bridge twisted apart in a 40 mph wind months after opening.",
+            "Wind drove its deck into a growing oscillation the structure couldn't withstand.",
+            "The collapse, captured on film, reshaped how engineers treat aerodynamics and resonance.",
+            "It brings the forces and oscillations in this module vividly to life.",
+        ],
+        "source": {"title": "Tacoma Narrows Bridge (1940)",
+                   "url": "https://en.wikipedia.org/wiki/Tacoma_Narrows_Bridge_(1940)"},
+    },
+    "chemistry": {
+        "title": "Case Study: Bhopal Disaster",
+        "bullets": [
+            "In 1984, a pesticide plant in Bhopal, India leaked a cloud of toxic methyl isocyanate gas.",
+            "Thousands died and hundreds of thousands were injured in one of history's worst industrial disasters.",
+            "Failed safety systems turned a chemical hazard into catastrophe.",
+            "It underlines why understanding the chemistry in this module matters.",
+        ],
+        "source": {"title": "Bhopal disaster", "url": "https://en.wikipedia.org/wiki/Bhopal_disaster"},
+    },
+    "statistics": {
+        "title": "Case Study: 1936 Literary Digest Poll",
+        "bullets": [
+            "In 1936, the Literary Digest polled millions and predicted Alf Landon would beat Roosevelt.",
+            "Roosevelt won in a landslide — the magazine's enormous sample was badly biased.",
+            "It had surveyed car and telephone owners, wealthier than the electorate at large.",
+            "It's the classic lesson in sampling that this module's methods address.",
+        ],
+        "source": {"title": "The Literary Digest",
+                   "url": "https://en.wikipedia.org/wiki/The_Literary_Digest"},
+    },
 }
 
-# General computer-science fallback for any module that matches no domain — still
-# a specific, real, well-documented event (never fabricated).
+# Computing/STEM fallback when a STEM module matches no specific domain — still a
+# specific, real, well-documented event (never fabricated).
 DEFAULT = {
     "title": "Case Study: Mars Climate Orbiter",
     "bullets": [
         "In 1999, NASA lost the $327 million Mars Climate Orbiter just as it reached the planet.",
         "One software module worked in metric units while another used imperial — and nobody caught it.",
         "The tiny mismatch sent the craft too close to Mars, where it broke apart.",
-        "It is a powerful reminder that small code details — the kind this module covers — really matter.",
+        "It is a powerful reminder that small technical details — the kind this module covers — really matter.",
     ],
     "source": {"title": "Mars Climate Orbiter",
                "url": "https://en.wikipedia.org/wiki/Mars_Climate_Orbiter"},
+}
+
+# Subject-neutral fallback for any non-STEM module that matches no field — a real,
+# broadly motivating turning point that fits humanities and social sciences too.
+DEFAULT_GENERAL = {
+    "title": "Case Study: Gutenberg's Printing Press",
+    "bullets": [
+        "Around 1440, Johannes Gutenberg introduced movable-type printing to Europe.",
+        "Books became cheap and plentiful, spreading ideas faster than ever before.",
+        "It helped fuel the Reformation, the Scientific Revolution, and mass literacy.",
+        "It's a reminder of how the knowledge in this module can reshape the world.",
+    ],
+    "source": {"title": "Printing press", "url": "https://en.wikipedia.org/wiki/Printing_press"},
 }
 
 # Domain keywords, checked against the lowercased title + objectives. Order is the
@@ -119,19 +203,53 @@ _MATCHERS = {
         "algorithm", "data structure", "sorting", "complexity", "big o",
         "dynamic programming",
     ),
+    "psychology": (
+        "psycholog", "cognitive", "behavioral", "behavioural", "mental health",
+        "neuroscience", "perception",
+    ),
+    "biology": (
+        "biolog", "genetic", "dna", "evolution", "organism", "ecology",
+        "physiology", "anatomy", "medicine", "medical", "pharmacolog", "cell biology",
+    ),
+    "economics": (
+        "econom", "macroeconom", "microeconom", "fiscal", "monetary", "gdp", "inflation",
+    ),
+    "physics": (
+        "physics", "mechanics", "thermodynamic", "quantum", "relativity",
+        "electromagnet", "kinematics",
+    ),
+    "chemistry": (
+        "chemistry", "chemical", "organic chem", "molecule", "compound", "stoichiometry",
+    ),
+    "statistics": (
+        "statistic", "probability", "regression", "sampling", "hypothesis test", "distribution",
+    ),
 }
-_ORDER = ("security", "ml_ai", "os_concurrency", "databases", "web", "algorithms")
+# Specific domains first; ties broken by this order (most specific / dramatic).
+_ORDER = (
+    "security", "ml_ai", "os_concurrency", "databases", "web", "algorithms",
+    "psychology", "biology", "economics", "physics", "chemistry", "statistics",
+)
+
+# Computing/STEM words that route an otherwise-unmatched module to the STEM
+# default (Mars Climate Orbiter) rather than the subject-neutral one.
+_STEM_HINTS = frozenset("computer engineering robotics technology informatics".split())
 
 
 def case_study_for(title, objectives=""):
-    """The best-matching curated case study for a module, or the general
-    computer-science default. Always returns a case study (title, bullets,
-    source) — there is no 'no match' outcome, matching the spec's rule that
-    every deck carries exactly one."""
+    """The best-matching curated case study for a module. Always returns one
+    (title, bullets, source): a matched field, else a STEM default for
+    computing/engineering modules, else a subject-neutral default — so every
+    deck carries exactly one, per the spec, with no fabricated events."""
     text = f"{title} {objectives}".lower()
     best, best_score = None, 0
     for domain in _ORDER:
         score = sum(1 for keyword in _MATCHERS[domain] if keyword in text)
         if score > best_score:
             best, best_score = domain, score
-    return CASE_STUDIES[best] if best else DEFAULT
+    if best:
+        return CASE_STUDIES[best]
+    tokens = set(re.findall(r"[a-z0-9+#]+", text))
+    if tokens & _PROGRAMMING_TERMS or tokens & _STEM_HINTS:
+        return DEFAULT
+    return DEFAULT_GENERAL

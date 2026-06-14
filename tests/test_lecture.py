@@ -493,3 +493,88 @@ def test_lecture_in_openapi(client):
     spec = client.get("/api/v1/openapi.json").get_json()
     assert "/api/v1/lecture" in spec["paths"]
     assert spec["paths"]["/api/v1/lecture"]["post"]["security"] == [{"ApiKeyAuth": []}]
+
+
+# --- conceptual (non-programming) profile -----------------------------------
+
+
+def test_classify_subject_programming_vs_conceptual():
+    from knowledge.lecture import classify_subject
+
+    assert classify_subject(["write a for loop", "define a function"]) == "programming"
+    assert classify_subject(["explain operant conditioning", "describe attachment theory"]) == "conceptual"
+    assert classify_subject(["explain photosynthesis"], title="Introduction to Biology") == "conceptual"
+
+
+def test_review_questions_generation():
+    from knowledge.lecture import _review_questions
+
+    qs = _review_questions("cognitive dissonance", "operant conditioning")
+    assert qs[0] == "Define cognitive dissonance in your own words."
+    assert any("real-world example" in q for q in qs)
+    assert qs[-1] == "How does cognitive dissonance relate to operant conditioning?"
+    # No next topic -> no relate question.
+    assert all("relate to" not in q for q in _review_questions("entropy"))
+
+
+def test_conceptual_deck_structure():
+    results = [
+        ObjectiveResult(
+            objective="Explain cognitive dissonance",
+            points=["It is the mental discomfort of holding conflicting beliefs."],
+            examples=[{
+                "kind": "prose",
+                "text": "For example, a smoker who knows smoking is harmful feels discomfort.",
+                "title": "Cognitive dissonance", "url": "u", "source": "Wikipedia",
+            }],
+            questions=[
+                "Define cognitive dissonance in your own words.",
+                "Explain why cognitive dissonance is important.",
+            ],
+            citations=[{"title": "Cognitive dissonance", "url": "u", "source": "Wikipedia"}],
+            confidence="high",
+        )
+    ]
+    deck = Presentation(io.BytesIO(build_module_deck("Introduction to Psychology", results)))
+    titles = [slide_title(s) for s in deck.slides]
+    assert "Cognitive Dissonance" in titles                       # concept slide
+    assert any(t.startswith("Illustration:") for t in titles)
+    assert any(t.startswith("Check Your Understanding:") for t in titles)
+    # No programming code units anywhere in a conceptual deck.
+    assert not any(
+        t.split(":")[0] in ("Example", "Walkthrough", "Practice", "Answer") for t in titles
+    )
+    # Case study is the matched field, not the computing default.
+    assert any("Stanford Prison Experiment" in t for t in titles)
+
+
+def test_conceptual_questions_carry_model_answers_in_notes():
+    results = [ObjectiveResult(
+        objective="Explain entropy",
+        points=["Entropy measures disorder in a system."],
+        questions=["Define entropy in your own words."],
+        citations=[], confidence="medium",
+    )]
+    deck = Presentation(io.BytesIO(build_module_deck("Thermodynamics", results)))
+    cyu = next(s for s in deck.slides if slide_title(s).startswith("Check Your Understanding"))
+    notes = cyu.notes_slide.notes_text_frame.text
+    assert "Entropy measures disorder in a system." in notes
+
+
+def test_build_lecture_deck_conceptual_attaches_questions(monkeypatch):
+    import knowledge.lecture as lecture
+
+    monkeypatch.setattr(
+        lecture,
+        "_build_objective",
+        lambda objective, context="", programming_lecture=False: ObjectiveResult(
+            objective=objective, points=["A relevant point."], confidence="medium"
+        ),
+    )
+    pptx_bytes, summary = lecture.build_lecture_deck(
+        "Explain cognitive dissonance. Describe attachment theory.",
+        title="Introduction to Psychology",
+    )
+    titles = [slide_title(s) for s in Presentation(io.BytesIO(pptx_bytes)).slides]
+    assert any(t.startswith("Check Your Understanding:") for t in titles)
+    assert not any(t.startswith("Example:") for t in titles)

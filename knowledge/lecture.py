@@ -165,6 +165,7 @@ class ObjectiveResult:
     points: list = field(default_factory=list)            # explanation bullets
     examples: list = field(default_factory=list)          # prose/code (non-programming lectures)
     concept_examples: list = field(default_factory=list)  # per-concept code (programming lectures)
+    questions: list = field(default_factory=list)         # review questions (conceptual lectures)
     citations: list = field(default_factory=list)
     confidence: str = "none"
 
@@ -533,6 +534,14 @@ def is_programming_lecture(objectives, title=""):
     )
 
 
+def classify_subject(objectives, title=""):
+    """The lecture profile that drives the deck's structure:
+    'programming' (per-concept code units) or 'conceptual' (illustration +
+    review questions). Deterministic — no model, no network. Quantitative
+    subjects fold into 'conceptual' for now."""
+    return "programming" if is_programming_lecture(objectives, title) else "conceptual"
+
+
 def _curated_explanation(objective):
     """Hand-written layman bullets for a concept or intro-CS topic, or None."""
     for concept in extract_concepts(analyze(objective)):
@@ -698,6 +707,40 @@ def _add_concept_unit(deck, unit, footer, register):
     register(unit)
 
 
+def _add_conceptual_unit(deck, result, footer, register):
+    """The non-programming rhythm after a concept slide: an Illustration (a
+    retrieved real-world example, when one was found) followed by a Check Your
+    Understanding slide whose review questions carry model talking points in the
+    speaker notes. No code."""
+    topic = _topic_title(result.objective)
+
+    example = result.examples[0] if result.examples else None
+    if example:
+        slide = add_content_slide(deck, f"Illustration: {topic}", footer=footer)
+        if example.get("kind") == "code" and example.get("lines"):
+            add_text_box(slide, example.get("text") or "Worked example:", top=1.7, height=1.3, size=18)
+            add_code_box(slide, example["lines"], top=3.5)
+        else:
+            add_text_box(slide, example["text"], top=1.7, height=4.5, size=18)
+        set_notes(slide, _example_notes(example))
+        register(example)
+
+    if result.questions:
+        notes = ["Suggested talking points (model answers):"]
+        notes.extend(f"- {point}" for point in (result.points or []))
+        if result.citations:
+            notes.append(
+                "Sources: " + "; ".join(f"{c['title']} ({c['source']})" for c in result.citations)
+            )
+        add_bullet_slide(
+            deck,
+            f"Check Your Understanding: {topic}",
+            result.questions,
+            notes="\n".join(notes),
+            footer=footer,
+        )
+
+
 def _add_case_study(deck, title, results, footer):
     """Add the single, deterministically chosen real-world case-study slide. No
     code; the real source is cited in the speaker notes so the claim is checkable
@@ -753,23 +796,27 @@ def build_module_deck(title, results):
         for citation in result.citations:
             register(citation)
 
-        # Each coding concept the objective introduces gets a fixed 4-slide unit:
-        # Example -> Walkthrough -> Practice -> Answer.
-        for unit in result.concept_examples:
-            _add_concept_unit(deck, unit, footer, register)
-
-        # Non-programming lectures: prose (or code) examples.
-        for example in result.examples:
-            example_slide = add_content_slide(
-                deck, f"Example — {_short(result.objective)}", footer=footer
-            )
-            if example["kind"] == "code":
-                add_text_box(example_slide, example.get("text") or "Worked example:", top=1.7, height=1.3, size=18)
-                add_code_box(example_slide, example["lines"], top=3.5)
-            else:
-                add_text_box(example_slide, example["text"], top=1.7, height=4.5, size=18)
-            set_notes(example_slide, _example_notes(example))
-            register(example)
+        if result.concept_examples:
+            # Programming: each coding concept gets a fixed 4-slide unit
+            # (Example -> Walkthrough -> Practice -> Answer).
+            for unit in result.concept_examples:
+                _add_concept_unit(deck, unit, footer, register)
+        elif result.questions:
+            # Conceptual (non-programming): Illustration + Check Your Understanding.
+            _add_conceptual_unit(deck, result, footer, register)
+        else:
+            # Generic fallback: prose (or code) example slides.
+            for example in result.examples:
+                example_slide = add_content_slide(
+                    deck, f"Example — {_short(result.objective)}", footer=footer
+                )
+                if example["kind"] == "code":
+                    add_text_box(example_slide, example.get("text") or "Worked example:", top=1.7, height=1.3, size=18)
+                    add_code_box(example_slide, example["lines"], top=3.5)
+                else:
+                    add_text_box(example_slide, example["text"], top=1.7, height=4.5, size=18)
+                set_notes(example_slide, _example_notes(example))
+                register(example)
 
     if ref_order:
         add_list_slide(
@@ -805,6 +852,32 @@ def _attach_concept_examples(results, objectives, title):
             owner[concept].concept_examples.append(unit)
 
 
+def _review_questions(topic, next_topic=None):
+    """Deterministic recall -> explain -> apply (-> relate) prompts for a topic.
+    No LLM: standard study questions the instructor answers from the (cited)
+    explanation in the slide's notes."""
+    topic = topic.strip().rstrip(".")
+    questions = [
+        f"Define {topic} in your own words.",
+        f"Explain why {topic} is important.",
+        f"Describe a real-world example of {topic}.",
+    ]
+    if next_topic:
+        nxt = next_topic.strip().rstrip(".")
+        if nxt and nxt.lower() != topic.lower():
+            questions.append(f"How does {topic} relate to {nxt}?")
+    return questions
+
+
+def _attach_review_questions(results):
+    """Conceptual (non-programming) lectures: give each objective a short set of
+    review questions, relating each to the next objective's topic."""
+    topics = [_topic_title(result.objective) for result in results]
+    for index, result in enumerate(results):
+        next_topic = topics[index + 1] if index + 1 < len(topics) else None
+        result.questions = _review_questions(topics[index], next_topic)
+
+
 def build_lecture_deck(objectives_text, title="Module Lecture"):
     """The /api/v1/lecture entry point: returns (pptx_bytes, summary)."""
     objectives = parse_objectives(objectives_text)
@@ -817,8 +890,10 @@ def build_lecture_deck(objectives_text, title="Module Lecture"):
     if cached is not None:
         return cached
 
-    # A programming lecture restricts example slides to code topics (with code).
-    programming_lecture = is_programming_lecture(objectives, title)
+    # The profile drives the deck's structure: programming gets per-concept code
+    # units; everything else (conceptual) gets illustrations + review questions.
+    profile = classify_subject(objectives, title)
+    programming_lecture = profile == "programming"
 
     context = context_terms(title) if title != "Module Lecture" else ""
     with ThreadPoolExecutor(max_workers=min(len(objectives), 6)) as executor:
@@ -828,6 +903,8 @@ def build_lecture_deck(objectives_text, title="Module Lecture"):
 
     if programming_lecture:
         _attach_concept_examples(results, objectives, title)
+    else:
+        _attach_review_questions(results)
 
     payload = build_module_deck(title, results)
     summary = {
