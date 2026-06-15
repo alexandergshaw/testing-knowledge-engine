@@ -299,6 +299,29 @@ def add_practice_slide(deck, title, language, lines, tasks):
     return slide
 
 
+def clean_step(text):
+    """Like clean_bullet but case-preserving — math steps are authored with
+    intentional case (e.g. a leading variable 'x = 2'), so never capitalize."""
+    text = re.sub(r"\s+", " ", str(text)).strip()
+    text = re.sub(r"^(?:[-*•–]|\d+[.)])\s*", "", text).strip()
+    if text and text[-1] not in ".!?:✓":
+        text += "."
+    return text
+
+
+def add_problem_slide(deck, title, problem, steps, footer=None):
+    """A quantitative worked/practice problem: the problem statement on top, then
+    solution steps as bullets below (steps may be a single 'try it' prompt for a
+    practice-only slide). No code box."""
+    slide = _content_base(deck, title)
+    if problem:
+        add_text_box(slide, problem, top=1.65, height=1.0, size=18)
+    cleaned = [b for b in (clean_step(step) for step in (steps or [])) if b]
+    if cleaned:
+        _bullets_box(slide, cleaned, left=0.55, top=2.8, width=12.3, height=SLIDE_H - 2.8 - 0.4, size=18)
+    return slide
+
+
 def slide_title(slide):
     """Title text of a slide built by these helpers (the topmost text box)."""
     titled = [s for s in slide.shapes if s.has_text_frame and s.text_frame.text.strip()]

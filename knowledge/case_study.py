@@ -232,8 +232,12 @@ _ORDER = (
 )
 
 # Computing/STEM words that route an otherwise-unmatched module to the STEM
-# default (Mars Climate Orbiter) rather than the subject-neutral one.
-_STEM_HINTS = frozenset("computer engineering robotics technology informatics".split())
+# default (Mars Climate Orbiter, itself a units/math failure) rather than the
+# subject-neutral one.
+_STEM_HINTS = frozenset(
+    """computer engineering robotics technology informatics math mathematics maths
+    algebra calculus geometry trigonometry arithmetic""".split()
+)
 
 
 def case_study_for(title, objectives=""):

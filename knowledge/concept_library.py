@@ -483,9 +483,157 @@ LIBRARY = {
             "Write it first, then translate it into a language.",
         ],
     },
+    # --- non-CS concepts (explanation + a curated illustration) -------------
+    # High-traffic topics across other fields, so a conceptual lecture reads
+    # like an instructor-made deck offline. Retrieval still covers the long tail.
+    "Classical Conditioning": {
+        "explanation": [
+            "Classical conditioning is learning to link two things that occur together.",
+            "A neutral cue paired with a meaningful one starts to trigger the same response.",
+            "Ivan Pavlov rang a bell before feeding dogs until the bell alone made them salivate.",
+            "It explains many automatic emotional and physical reactions.",
+        ],
+        "illustration": "For example, if a song always played during happy childhood meals, hearing it later can make you feel hungry or nostalgic.",
+    },
+    "Operant Conditioning": {
+        "explanation": [
+            "Operant conditioning is learning from the consequences of our actions.",
+            "Rewards make a behavior more likely; punishments make it less likely.",
+            "B.F. Skinner showed rats pressing a lever more often when it released food.",
+            "It underlies habits, training, and much of everyday motivation.",
+        ],
+        "illustration": "For example, a student praised for raising their hand starts to participate more often.",
+    },
+    "Cognitive Dissonance": {
+        "explanation": [
+            "Cognitive dissonance is the discomfort of holding two conflicting beliefs.",
+            "To ease it, people often change a belief or justify their behavior.",
+            "Leon Festinger described it after studying a group whose prophecy failed.",
+            "It explains why we rationalize choices that don't match our values.",
+        ],
+        "illustration": "For example, a smoker who knows smoking is harmful may downplay the risk to stay comfortable continuing.",
+    },
+    "Maslow's Hierarchy of Needs": {
+        "explanation": [
+            "Maslow's hierarchy ranks human needs from basic to higher-level.",
+            "Physiological and safety needs come first, then love, esteem, and self-actualization.",
+            "People generally meet lower needs before pursuing higher ones.",
+            "It's a common framework for motivation in psychology and business.",
+        ],
+        "illustration": "For example, someone worried about food and rent rarely focuses on creative self-fulfillment until those basics are secure.",
+    },
+    "The Bystander Effect": {
+        "explanation": [
+            "The bystander effect is the tendency to help less when others are present.",
+            "Responsibility feels diffused — each person assumes someone else will act.",
+            "It drew research attention after the 1964 Kitty Genovese case.",
+            "Naming a specific person to help often breaks the effect.",
+        ],
+        "illustration": "For example, in a crowded station people may walk past someone who has collapsed, each assuming another will step in.",
+    },
+    "Photosynthesis": {
+        "explanation": [
+            "Photosynthesis is how plants make their own food from sunlight.",
+            "Leaves use light, water, and carbon dioxide to produce sugar.",
+            "Oxygen is released as a by-product, which animals breathe.",
+            "It's the foundation of most food chains on Earth.",
+        ],
+        "illustration": "For example, a tree turns sunlight and air into the sugars it uses to grow new leaves and wood.",
+    },
+    "Natural Selection": {
+        "explanation": [
+            "Natural selection is how species change over generations.",
+            "Individuals with helpful traits survive and reproduce more.",
+            "Those traits become more common in the population over time.",
+            "Charles Darwin proposed it as the engine of evolution.",
+        ],
+        "illustration": "For example, moths with darker wings survived better in soot-darkened cities, so dark moths became more common.",
+    },
+    "Cells": {
+        "explanation": [
+            "The cell is the basic building block of all living things.",
+            "Some organisms are a single cell; others have trillions.",
+            "Cells carry out life processes like using energy and reproducing.",
+            "Plant and animal cells share parts but differ in some structures.",
+        ],
+        "illustration": "For example, your skin constantly makes new cells to replace ones that wear away.",
+    },
+    "DNA": {
+        "explanation": [
+            "DNA is the molecule that stores an organism's genetic instructions.",
+            "It is shaped like a twisted ladder called a double helix.",
+            "Its sequence acts as a code for building proteins.",
+            "DNA is passed from parents to offspring.",
+        ],
+        "illustration": "For example, DNA inherited from your parents helps determine traits like eye color.",
+    },
+    "Supply and Demand": {
+        "explanation": [
+            "Supply and demand describe how prices form in a market.",
+            "Demand is how much buyers want at each price; supply is how much sellers offer.",
+            "Price tends to settle where the two meet — the equilibrium.",
+            "Shortages push prices up; surpluses push them down.",
+        ],
+        "illustration": "For example, when a popular toy sells out before the holidays, sellers raise the price until demand cools.",
+    },
+    "Opportunity Cost": {
+        "explanation": [
+            "Opportunity cost is the value of the next-best option you give up.",
+            "Every choice means forgoing something else.",
+            "It applies to money, time, and resources alike.",
+            "Good decisions weigh what's gained against what's sacrificed.",
+        ],
+        "illustration": "For example, spending Saturday studying has the opportunity cost of the shift you could have worked for pay.",
+    },
+    "Inflation": {
+        "explanation": [
+            "Inflation is a general rise in prices over time.",
+            "As prices climb, each unit of money buys less.",
+            "Moderate inflation is normal; rapid inflation erodes savings.",
+            "Central banks adjust interest rates to keep it in check.",
+        ],
+        "illustration": "For example, if a $1 candy bar costs $1.05 a year later, that's roughly 5% inflation.",
+    },
+    "Newton's Laws of Motion": {
+        "explanation": [
+            "Newton's three laws describe how objects move under forces.",
+            "First: an object keeps its motion unless a force acts on it.",
+            "Second: force equals mass times acceleration (F = ma).",
+            "Third: every action has an equal and opposite reaction.",
+        ],
+        "illustration": "For example, a rocket pushes gas downward and the gas pushes the rocket upward — Newton's third law.",
+    },
+    "Gravity": {
+        "explanation": [
+            "Gravity is the force that pulls objects with mass toward each other.",
+            "It gives objects weight and keeps planets in orbit.",
+            "On Earth it pulls everything downward at about 9.8 m/s².",
+            "The more massive an object, the stronger its gravitational pull.",
+        ],
+        "illustration": "For example, gravity makes a dropped ball fall and holds the Moon in orbit around Earth.",
+    },
+    "Atoms": {
+        "explanation": [
+            "An atom is the smallest unit of a chemical element.",
+            "It has a nucleus of protons and neutrons, with electrons around it.",
+            "The number of protons defines which element it is.",
+            "Atoms combine to form molecules and everything around us.",
+        ],
+        "illustration": "For example, a single drop of water contains billions of atoms of hydrogen and oxygen.",
+    },
+    "The Periodic Table": {
+        "explanation": [
+            "The periodic table organizes all known chemical elements.",
+            "Elements are ordered by their number of protons.",
+            "Columns group elements with similar properties.",
+            "It lets chemists predict how elements behave and react.",
+        ],
+        "illustration": "For example, the elements in the far-right column — like helium and neon — are all stable, unreactive gases.",
+    },
 }
 
-# Conceptual intro-CS topics, matched by phrases in the objective text.
+# Conceptual topics, matched by phrases in the objective text. More specific
+# phrases should precede broader ones (first match wins).
 TOPIC_MATCHERS = {
     "Computer Science in the Real World": [
         "real world", "real-world", "computer science in", "examples of computer science",
@@ -495,6 +643,23 @@ TOPIC_MATCHERS = {
     "Algorithms": ["algorithm"],
     "Debugging": ["debug"],
     "Pseudocode": ["pseudocode"],
+    # non-CS fields
+    "Classical Conditioning": ["classical conditioning", "pavlov"],
+    "Operant Conditioning": ["operant conditioning", "reinforcement", "skinner"],
+    "Cognitive Dissonance": ["cognitive dissonance"],
+    "Maslow's Hierarchy of Needs": ["maslow", "hierarchy of needs"],
+    "The Bystander Effect": ["bystander"],
+    "Photosynthesis": ["photosynthesis"],
+    "Natural Selection": ["natural selection", "survival of the fittest"],
+    "Cells": ["cell biology", "cell structure", "cell theory"],
+    "DNA": ["dna", "double helix", "genetic code"],
+    "Supply and Demand": ["supply and demand"],
+    "Opportunity Cost": ["opportunity cost"],
+    "Inflation": ["inflation"],
+    "Newton's Laws of Motion": ["newton's laws", "newtons laws", "laws of motion"],
+    "Gravity": ["gravity", "gravitation"],
+    "Atoms": ["atomic structure", "atoms", "the atom"],
+    "The Periodic Table": ["periodic table"],
 }
 
 
@@ -502,6 +667,12 @@ def explanation_for(name):
     """Curated layman explanation bullets for a concept/topic name, or None."""
     entry = LIBRARY.get(name)
     return list(entry["explanation"]) if entry else None
+
+
+def illustration_for(name):
+    """A curated real-world illustration sentence for a concept, or None."""
+    entry = LIBRARY.get(name)
+    return entry.get("illustration") if entry else None
 
 
 def _choose_language(examples, language):

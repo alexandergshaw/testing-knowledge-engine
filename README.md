@@ -82,7 +82,8 @@ slide is extracted from cited sources.
   common words) competes sentence-for-sentence in ranking, so the plainest
   phrasing tends to win when a topic has both.
 - A deck's structure follows its **profile** (`classify_subject`): `programming`
-  (per-concept code units) or `conceptual` (everything else — sciences, social
+  (per-concept code units), `quantitative` (math/physics/chemistry/statistics —
+  worked-problem units), or `conceptual` (everything else — sciences, social
   science, humanities). The profile is deterministic (title/objective keywords),
   no model.
 - Slide 3 of every deck is a **real-world case study**
@@ -111,13 +112,20 @@ slide is extracted from cited sources.
   do); the single reference snippet is the Example's code, reused by the
   Walkthrough and Practice slides *by construction*, so a generated practice
   snippet can never leak the answer.
-- For a **conceptual** lecture (any non-programming subject), each objective
-  instead gets, after its concept slide: an **`Illustration:`** slide (a real,
-  cited "for example…" pulled from the sources, when one is found) and a
-  **`Check Your Understanding:`** slide of deterministic review questions
-  (define → explain → apply → relate-to-the-next-topic), with model answers and
-  citations in the speaker notes. No code, no LLM — the questions are templated
-  from each objective's topic.
+- For a **quantitative** lecture, each objective that names a curated concept
+  ([knowledge/quant_library.py](knowledge/quant_library.py)) gets a worked-problem
+  unit: **`Worked Example:`** (a solved problem with step-by-step working) →
+  **`Practice:`** (a problem, no solution shown) → **`Answer:`** (the distinct
+  solution). Every example and answer is hand-verified — no LLM, no fabricated
+  math. Objectives with no curated match fall back to the conceptual rhythm.
+- For a **conceptual** lecture (any other non-programming subject), each
+  objective instead gets, after its concept slide: an **`Illustration:`** slide
+  (a real, cited "for example…" — curated for high-traffic topics
+  ([knowledge/concept_library.py](knowledge/concept_library.py)), else pulled
+  from sources) and a **`Check Your Understanding:`** slide of deterministic
+  review questions (define → explain → apply → relate-to-the-next-topic), with
+  model answers and citations in the speaker notes. No code, no LLM — the
+  questions are templated from each objective's topic.
 
 Every returned deck (this endpoint and the per-unit lectures in
 `/api/v1/materials`) is built to one house style in

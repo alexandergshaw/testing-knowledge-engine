@@ -578,3 +578,60 @@ def test_build_lecture_deck_conceptual_attaches_questions(monkeypatch):
     titles = [slide_title(s) for s in Presentation(io.BytesIO(pptx_bytes)).slides]
     assert any(t.startswith("Check Your Understanding:") for t in titles)
     assert not any(t.startswith("Example:") for t in titles)
+
+
+# --- quantitative profile ----------------------------------------------------
+
+
+def test_classify_subject_quantitative():
+    from knowledge.lecture import classify_subject
+
+    assert classify_subject(["solve quadratic equations"], title="Algebra I") == "quantitative"
+    assert classify_subject(["apply Newton's second law"], title="Physics") == "quantitative"
+    # Programming detection still takes precedence.
+    assert classify_subject(["write a function to compute the mean"], title="Python") == "programming"
+    # A humanities module stays conceptual.
+    assert classify_subject(["discuss the causes of the French Revolution"], title="World History") == "conceptual"
+
+
+def test_quant_deck_structure_and_no_answer_leak():
+    from knowledge.lecture import _attach_quant_units
+
+    results = [ObjectiveResult(objective="Solve quadratic equations",
+                               points=["A quadratic equation has the form ax^2 + bx + c = 0."],
+                               confidence="high")]
+    _attach_quant_units(results)
+    assert results[0].quant_units  # matched a curated concept
+
+    deck = Presentation(io.BytesIO(build_module_deck("Algebra I", results)))
+    titles = [slide_title(s) for s in deck.slides]
+    assert any(t.startswith("Worked Example:") for t in titles)
+    assert any(t.startswith("Practice:") for t in titles)
+    assert any(t.startswith("Answer:") for t in titles)
+    # No code anywhere in a quantitative deck.
+    assert not any(
+        sh.has_text_frame and any(p.font.name == "Courier New" for p in sh.text_frame.paragraphs)
+        for s in deck.slides for sh in s.shapes
+    )
+    # The Practice slide shows the problem but must NOT reveal the solution.
+    practice = next(s for s in deck.slides if slide_title(s).startswith("Practice:"))
+    ptext = "\n".join(sh.text_frame.text for sh in practice.shapes if sh.has_text_frame)
+    assert "x = 3" not in ptext and "x = 4" not in ptext
+
+
+def test_quant_unmatched_objective_falls_back_to_conceptual(monkeypatch):
+    import knowledge.lecture as lecture
+
+    monkeypatch.setattr(
+        lecture,
+        "_build_objective",
+        lambda objective, context="", programming_lecture=False: ObjectiveResult(
+            objective=objective, points=["A point."], confidence="medium"
+        ),
+    )
+    pptx_bytes, _ = lecture.build_lecture_deck(
+        "Solve quadratic equations. Discuss the history of mathematics.", title="Algebra"
+    )
+    titles = [slide_title(s) for s in Presentation(io.BytesIO(pptx_bytes)).slides]
+    assert any(t.startswith("Worked Example: Quadratic") for t in titles)   # matched -> quant unit
+    assert any(t.startswith("Check Your Understanding:") for t in titles)   # unmatched -> conceptual

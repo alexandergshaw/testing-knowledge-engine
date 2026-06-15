@@ -27,6 +27,7 @@ from .slides import (
     add_content_slide,
     add_list_slide,
     add_practice_slide,
+    add_problem_slide,
     add_text_box,
     add_title_slide,
     add_walkthrough_slide,
@@ -36,7 +37,7 @@ from .slides import (
     set_notes,
 )
 from .synthesize import FALLBACK_ANSWER, sanitize_layman, synthesize
-from . import case_study, concept_library
+from . import case_study, concept_library, quant_library
 
 log = logging.getLogger(__name__)
 
@@ -165,6 +166,7 @@ class ObjectiveResult:
     points: list = field(default_factory=list)            # explanation bullets
     examples: list = field(default_factory=list)          # prose/code (non-programming lectures)
     concept_examples: list = field(default_factory=list)  # per-concept code (programming lectures)
+    quant_units: list = field(default_factory=list)       # worked-problem units (quantitative lectures)
     questions: list = field(default_factory=list)         # review questions (conceptual lectures)
     citations: list = field(default_factory=list)
     confidence: str = "none"
@@ -534,29 +536,72 @@ def is_programming_lecture(objectives, title=""):
     )
 
 
+# Field/keyword markers for quantitative (problem-solving) subjects.
+_QUANT_TERMS = frozenset(
+    """math mathematics maths algebra calculus geometry trigonometry arithmetic
+    precalculus statistics statistical probability physics mechanics kinematics
+    chemistry quantitative equations equation""".split()
+)
+
+
+def _is_quantitative(objectives, title=""):
+    """A quantitative lecture: the subject is math/physics/chemistry/statistics,
+    or at least one objective names a curated worked-problem concept."""
+    words = set(tokenize(title)) | set(tokenize(" ".join(objectives)))
+    if words & _QUANT_TERMS:
+        return True
+    return any(quant_library.match(objective) for objective in objectives)
+
+
 def classify_subject(objectives, title=""):
-    """The lecture profile that drives the deck's structure:
-    'programming' (per-concept code units) or 'conceptual' (illustration +
-    review questions). Deterministic — no model, no network. Quantitative
-    subjects fold into 'conceptual' for now."""
-    return "programming" if is_programming_lecture(objectives, title) else "conceptual"
+    """The lecture profile that drives the deck's structure: 'programming'
+    (per-concept code units), 'quantitative' (worked-problem units), or
+    'conceptual' (illustration + review questions). Deterministic — no model,
+    no network."""
+    if is_programming_lecture(objectives, title):
+        return "programming"
+    if _is_quantitative(objectives, title):
+        return "quantitative"
+    return "conceptual"
 
 
 def _curated_explanation(objective):
-    """Hand-written layman bullets for a concept or intro-CS topic, or None."""
+    """Hand-written layman bullets for a concept or topic, or None. Checks
+    programming concepts, then quantitative concepts, then conceptual topics."""
     for concept in extract_concepts(analyze(objective)):
         bullets = concept_library.explanation_for(concept)
+        if bullets:
+            return bullets
+    qname = quant_library.match(objective)
+    if qname:
+        bullets = quant_library.explanation_for(qname)
         if bullets:
             return bullets
     topic = concept_library.match_topic(objective)
     return concept_library.explanation_for(topic) if topic else None
 
 
+def _curated_illustration(objective):
+    """A curated real-world illustration sentence for a conceptual objective, or
+    None (programming/quantitative concepts use code/worked examples instead)."""
+    topic = concept_library.match_topic(objective)
+    return concept_library.illustration_for(topic) if topic else None
+
+
 def _build_objective(objective, context="", programming_lecture=False):
     # Prefer curated, Gemini-quality layman content — no network, no jargon.
     curated = _curated_explanation(objective)
     if curated is not None:
-        return ObjectiveResult(objective=objective, points=curated, citations=[], confidence="high")
+        examples = []
+        if not programming_lecture:
+            illustration = _curated_illustration(objective)
+            if illustration:
+                examples = [
+                    {"kind": "prose", "text": illustration, "title": "", "url": "", "source": "Curated"}
+                ]
+        return ObjectiveResult(
+            objective=objective, points=curated, examples=examples, citations=[], confidence="high"
+        )
 
     # Fallback: retrieve, synthesize, and strip encyclopedic markup.
     query = analyze(objective)
@@ -741,6 +786,35 @@ def _add_conceptual_unit(deck, result, footer, register):
         )
 
 
+def _add_quant_unit(deck, unit, footer):
+    """Render one quantitative concept as Worked Example -> Practice -> Answer.
+    The Worked Example shows the full method; Practice shows only the problem
+    (no solution); Answer carries the distinct solution to the practice problem."""
+    concept = unit["concept"]
+    worked = unit["worked_example"]
+    practice = unit["practice"]
+    answer = unit["answer"]
+
+    worked_slide = add_problem_slide(
+        deck, f"Worked Example: {concept}", worked["problem"], worked["steps"], footer=footer
+    )
+    set_notes(worked_slide, "Talking points:\nWork through each step aloud, explaining the reasoning.")
+
+    practice_slide = add_problem_slide(
+        deck,
+        f"Practice: {concept}",
+        practice["problem"],
+        ["Work it out on your own, then check the Answer slide."],
+        footer=footer,
+    )
+    set_notes(practice_slide, "Talking points:\nGive students time to attempt the problem before revealing the answer.")
+
+    answer_slide = add_problem_slide(
+        deck, f"Answer: {concept}", practice["problem"], answer["steps"], footer=footer
+    )
+    set_notes(answer_slide, "Talking points:\nReveal after the attempt; have students compare their steps.")
+
+
 def _add_case_study(deck, title, results, footer):
     """Add the single, deterministically chosen real-world case-study slide. No
     code; the real source is cited in the speaker notes so the claim is checkable
@@ -801,6 +875,10 @@ def build_module_deck(title, results):
             # (Example -> Walkthrough -> Practice -> Answer).
             for unit in result.concept_examples:
                 _add_concept_unit(deck, unit, footer, register)
+        elif result.quant_units:
+            # Quantitative: Worked Example -> Practice -> Answer.
+            for unit in result.quant_units:
+                _add_quant_unit(deck, unit, footer)
         elif result.questions:
             # Conceptual (non-programming): Illustration + Check Your Understanding.
             _add_conceptual_unit(deck, result, footer, register)
@@ -878,6 +956,19 @@ def _attach_review_questions(results):
         result.questions = _review_questions(topics[index], next_topic)
 
 
+def _attach_quant_units(results):
+    """Quantitative lectures: give each objective that names a curated concept a
+    worked-problem unit. Objectives with no match get nothing here and fall back
+    to the conceptual rhythm (illustration + review questions)."""
+    for result in results:
+        name = quant_library.match(result.objective)
+        if not name:
+            continue
+        unit = quant_library.unit_for(name)
+        if unit:
+            result.quant_units.append({"concept": name, **unit})
+
+
 def build_lecture_deck(objectives_text, title="Module Lecture"):
     """The /api/v1/lecture entry point: returns (pptx_bytes, summary)."""
     objectives = parse_objectives(objectives_text)
@@ -901,8 +992,13 @@ def build_lecture_deck(objectives_text, title="Module Lecture"):
             executor.map(lambda o: _safe_build(o, context, programming_lecture), objectives)
         )
 
-    if programming_lecture:
+    if profile == "programming":
         _attach_concept_examples(results, objectives, title)
+    elif profile == "quantitative":
+        _attach_quant_units(results)
+        # Objectives that matched no worked-problem concept fall back to the
+        # conceptual rhythm (illustration + review questions).
+        _attach_review_questions([r for r in results if not r.quant_units])
     else:
         _attach_review_questions(results)
 

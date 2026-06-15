@@ -51,7 +51,18 @@ def test_match_topic():
         == "Computer Science in the Real World"
     )
     assert concept_library.match_topic("Describe problem-solving strategies") == "Problem-Solving Strategies"
-    assert concept_library.match_topic("Explain cognitive dissonance") is None
+    # non-CS topics are now curated too
+    assert concept_library.match_topic("Explain cognitive dissonance") == "Cognitive Dissonance"
+    assert concept_library.match_topic("Describe photosynthesis") == "Photosynthesis"
+    # genuinely uncurated -> None (falls back to retrieval)
+    assert concept_library.match_topic("Explain medieval feudalism") is None
+
+
+def test_non_cs_concepts_have_explanation_and_illustration():
+    for name in ("Cognitive Dissonance", "Photosynthesis", "Supply and Demand", "Gravity"):
+        assert concept_library.explanation_for(name)
+        assert concept_library.illustration_for(name)
+        assert concept_library.code_for(name) is None  # conceptual: no code
 
 
 def test_curated_explanation_covers_concepts_and_topics():
@@ -61,8 +72,10 @@ def test_curated_explanation_covers_concepts_and_topics():
     assert _curated_explanation("Implement basic control structures") is not None
     assert _curated_explanation("Provide examples of Computer Science in the Real World") is not None
     assert _curated_explanation("Describe Problem-solving strategies") is not None
+    # non-CS topics are now curated
+    assert _curated_explanation("Explain cognitive dissonance") is not None
     # not curated -> falls back to retrieval
-    assert _curated_explanation("Explain cognitive dissonance") is None
+    assert _curated_explanation("Explain medieval feudalism") is None
 
 
 def test_sanitize_layman_strips_latex_and_markup():

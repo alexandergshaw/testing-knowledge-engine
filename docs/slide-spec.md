@@ -35,9 +35,10 @@ A deck is `{ "presentationTitle": "string", "slides": [ ... ] }`.
 Slide 1: Title
 Slide 2: Module Overview
 Slide 3: Case Study
-Slide 4+: body
-   programming objective: Concept → Example → Walkthrough → Practice → Answer
-   conceptual objective:  Concept → Illustration → Check Your Understanding
+Slide 4+: body (per the deck's profile)
+   programming objective:  Concept → Example → Walkthrough → Practice → Answer
+   quantitative objective: Concept → Worked Example → Practice → Answer
+   conceptual objective:   Concept → Illustration → Check Your Understanding
 (optional) References / sources
 ```
 
@@ -136,9 +137,30 @@ is replaced by a parallel rhythm after each concept slide:
 | `Check Your Understanding:` | Review questions on the concept                    | deterministic prompts (define → explain → apply → relate); model answers + sources in the speaker notes |
 
 The questions are templated from the objective's topic (no LLM); the "relate"
-question links it to the next objective's topic. The profile is chosen by
-`classify_subject` (`programming` vs `conceptual`); quantitative subjects
-currently use the conceptual profile.
+question links it to the next objective's topic. High-traffic conceptual topics
+also ship curated explanations + a curated illustration
+([knowledge/concept_library.py](../knowledge/concept_library.py)), so they render
+offline; the rest fall back to retrieval.
+
+## 6a. Quantitative modules
+
+A math/physics/chemistry/statistics module uses the **quantitative profile**:
+each objective that names a curated concept
+([knowledge/quant_library.py](../knowledge/quant_library.py)) gets a worked-problem
+unit after its concept slide — still no code:
+
+| Title prefix     | Purpose                                          | content                                  |
+|------------------|--------------------------------------------------|------------------------------------------|
+| `Worked Example:`| Demonstrate the method on a solved problem       | problem statement + step-by-step solution |
+| `Practice:`      | A problem to attempt                             | problem statement only — **no solution shown** |
+| `Answer:`        | The distinct solution to the practice problem    | the practice problem + its solution steps |
+
+Every worked example and answer is hand-verified for correctness (no LLM, no
+fabricated math). An objective that matches no curated concept falls back to the
+conceptual rhythm (Illustration + Check Your Understanding).
+
+The profile is chosen by `classify_subject` → `programming` | `quantitative` |
+`conceptual`.
 
 ## 7. Rendering (this repo)
 
