@@ -92,6 +92,13 @@ rendered). See [docs/lecture-upload.md](docs/lecture-upload.md).
   full **synthesized** unit (explanation → illustration → verb-aware review
   questions, or a retrieved code unit with a distinct second snippet for the
   answer). No objective is ever a bare slide, for any subject.
+- **Provenance & confidence on every section.** Each is tagged `curated`,
+  `synthesized` (verify), or `gap` (needs review) + a confidence level, surfaced
+  in speaker notes and in a structured view: `POST /api/v1/lecture?format=json`
+  returns the deck model (title, profile, sections with provenance/confidence/
+  citations, `provenanceSummary`) instead of the binary — so a consuming app can
+  trust, route, or flag any section. Makes the uncurated path auditable and
+  shippable. Default response is still the `.pptx`.
 - **Curated content first** ([knowledge/concept_library.py](knowledge/concept_library.py)):
   common programming concepts (Variables, Data Types, Loops, Conditionals,
   Functions, Classes…) and intro-CS topics (Real-World CS, Problem-Solving,

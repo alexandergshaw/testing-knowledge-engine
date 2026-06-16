@@ -390,6 +390,19 @@ OPENAPI_SPEC = {
                     "when both are given, the file's text is merged ahead of `objectives`."
                 ),
                 "security": [{"ApiKeyAuth": []}],
+                "parameters": [
+                    {
+                        "name": "format",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "string", "enum": ["json"]},
+                        "description": (
+                            "Set to `json` to return the structured, provenance-tagged deck "
+                            "model (title, profile, sections with provenance/confidence/"
+                            "citations, provenanceSummary) instead of the .pptx binary."
+                        ),
+                    }
+                ],
                 "requestBody": {
                     "required": True,
                     "content": {
@@ -755,6 +768,12 @@ def make_lecture():
             "summary": summary,
         },
     )
+    # Opt-in content negotiation: ?format=json returns the structured,
+    # provenance-tagged deck model instead of the binary, so a consuming app can
+    # inspect/trust/route each section. Default stays the .pptx (back-compatible —
+    # we don't switch on Accept, which many clients default to application/json).
+    if request.args.get("format") == "json":
+        return jsonify(summary)
     return send_file(
         io.BytesIO(payload),
         mimetype=PPTX_MIMETYPE,

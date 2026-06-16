@@ -82,6 +82,30 @@ copies of — the assignment's questions.
   homework yields no recognizable concepts, the deck is produced as if none was
   given.
 
+## Structured output & provenance (`?format=json`)
+`POST /api/v1/lecture?format=json` returns the **structured deck model** instead
+of the `.pptx`:
+```jsonc
+{
+  "title": "...", "profile": "programming|quantitative|conceptual",
+  "objectiveCount": 4, "prerequisites": 1,
+  "provenanceSummary": { "curated": 2, "synthesized": 2 },
+  "sections": [
+    { "topic": "Variables", "provenance": "curated", "confidence": "high",
+      "unit": "code", "needsReview": false, "points": ["..."], "citations": [] },
+    { "topic": "Accumulator Pattern", "provenance": "synthesized",
+      "confidence": "high", "unit": "conceptual", "needsReview": false,
+      "points": ["..."], "citations": [{ "title": "...", "url": "...", "source": "Wikipedia" }] }
+  ],
+  "citations": [ ... ]
+}
+```
+- `provenance`: `curated` (engine-authored), `synthesized` (assembled from cited
+  public sources — verify), or `gap` (no reliable source — `needsReview: true`).
+- Use it to decide per section whether to trust, show a "verify" badge, or hold
+  for review. The default (no `format`) is still the binary `.pptx`; the same
+  provenance also appears in the deck's speaker notes.
+
 ## Supported file types
 Extracted server-side: `.pptx`, `.docx`, `.xlsx`, `.pdf`, `.odt`, `.odp`, `.ods`,
 `.rtf`, and plain-text/source files (`.txt`, `.md`, `.markdown`, `.rst`, `.csv`,

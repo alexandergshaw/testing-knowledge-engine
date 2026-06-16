@@ -184,6 +184,7 @@ class ObjectiveResult:
     questions: list = field(default_factory=list)         # review questions (conceptual lectures)
     citations: list = field(default_factory=list)
     confidence: str = "none"
+    provenance: str = "none"                              # curated | synthesized | gap
     prerequisite: bool = False                            # homework-driven coverage (kept off the agenda)
 
 
@@ -644,7 +645,8 @@ def _build_objective(objective, context="", homework_tokens=None):
             else []
         )
         return ObjectiveResult(
-            objective=objective, points=curated, examples=examples, citations=[], confidence="high"
+            objective=objective, points=curated, examples=examples, citations=[],
+            confidence="high", provenance="curated",
         )
 
     # Fallback: retrieve, synthesize, and strip encyclopedic markup. Examples are
@@ -655,7 +657,7 @@ def _build_objective(objective, context="", homework_tokens=None):
         query.search_terms = f"{query.search_terms} {context}".strip()
     passages = fetch(query, select_sources(query))
     if not passages:
-        return ObjectiveResult(objective)
+        return ObjectiveResult(objective, provenance="gap")
     ranked = rank(query, passages)
     synth = synthesize(query, ranked)
     points = [p for p in (sanitize_layman(point) for point in _to_points(synth["answer"])) if p]
@@ -665,6 +667,7 @@ def _build_objective(objective, context="", homework_tokens=None):
         examples=extract_examples(query, passages, ranked, homework_tokens=homework_tokens),
         citations=synth["citations"],
         confidence=synth["confidence"],
+        provenance="synthesized" if points else "gap",
     )
 
 
@@ -705,12 +708,28 @@ def _ref_key(item):
     return (item.get("title", ""), item.get("url", ""), item.get("source", ""))
 
 
+# Honest, consistent provenance line for a slide's speaker notes.
+_PROVENANCE_NOTE = {
+    "curated": "Provenance: curated content (engine-authored, high confidence).",
+    "synthesized": "Provenance: synthesized from public sources — verify before teaching.",
+    "gap": "Provenance: gap — no reliable source found. Needs review / your own material.",
+}
+
+
+def _provenance_line(result):
+    note = _PROVENANCE_NOTE.get(result.provenance)
+    if not note:
+        return ""
+    if result.provenance == "synthesized":
+        note += f" (confidence: {result.confidence})"
+    return note
+
+
 def _explanation_notes(index, result):
     lines = [f"Objective {index}: {result.objective}", ""]
-    if result.confidence in ("low", "none"):
-        lines.append(
-            f"(Source confidence: {result.confidence} — supplement this with your own material.)"
-        )
+    provenance = _provenance_line(result)
+    if provenance:
+        lines.append(provenance)
     if result.citations:
         lines.append(
             "Sources: "
@@ -1209,20 +1228,55 @@ def build_lecture_deck(
     _attach_review_questions([r for r in results if not r.concept_examples and not r.quant_units])
 
     payload = build_module_deck(title, results, source_label=source_label)
-    summary = {
-        "title": title,
-        "objectives": len(objectives),
-        "prerequisites": len(prereq_results),
-        "items": [
-            {
-                "objective": r.objective,
-                "confidence": r.confidence,
-                "examples": len(r.examples) + len(r.concept_examples) + len(r.quant_units),
-                "prerequisite": r.prerequisite,
-            }
-            for r in results
-        ],
-    }
+    summary = _deck_model(title, profile, results, len(prereq_results), source_label)
     self_result = (payload, summary)
     _cache.set(cache_key, self_result)
     return self_result
+
+
+def _unit_kind(result):
+    if result.concept_examples:
+        return "code"
+    if result.quant_units:
+        return "worked_problem"
+    if result.questions:
+        return "conceptual"
+    return "none"
+
+
+def _deck_model(title, profile, results, prerequisite_count, source_label=None):
+    """A serializable, provenance-tagged view of the deck — the knowledge other
+    apps consume (returned by `?format=json`). Doubles as the log/archive summary."""
+    sections, provenance_summary, citations, citation_keys = [], {}, [], set()
+    for result in results:
+        provenance_summary[result.provenance] = provenance_summary.get(result.provenance, 0) + 1
+        for citation in result.citations:
+            key = (citation.get("title"), citation.get("url"))
+            if citation.get("url") and key not in citation_keys:
+                citation_keys.add(key)
+                citations.append(citation)
+        sections.append(
+            {
+                "objective": result.objective,
+                "topic": clean_title(_topic_title(result.objective)),
+                "prerequisite": result.prerequisite,
+                "provenance": result.provenance,
+                "confidence": result.confidence,
+                "needsReview": result.provenance == "gap",
+                "unit": _unit_kind(result),
+                "points": result.points,
+                "citations": result.citations,
+            }
+        )
+    objective_count = len(sections) - prerequisite_count
+    return {
+        "title": title,
+        "profile": profile,
+        "sourceFile": source_label,
+        "objectives": objective_count,        # count of agenda objectives (back-compat)
+        "objectiveCount": objective_count,
+        "prerequisites": prerequisite_count,
+        "provenanceSummary": provenance_summary,
+        "sections": sections,
+        "citations": citations,
+    }

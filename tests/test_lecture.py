@@ -906,3 +906,59 @@ def test_concept_unit_uses_distinct_second_snippet_for_answer(monkeypatch):
     assert unit["example"]["lines"] == ["a = 1"]
     assert unit["answer"]["lines"] == ["b = 2"]              # distinct from the example
     assert "alternative" in unit["answer"]["caption"].lower()
+
+
+# --- C3: provenance & confidence --------------------------------------------
+
+
+def test_deck_model_tags_provenance():
+    from knowledge.lecture import build_lecture_deck
+
+    # Curated objectives -> offline, provenance "curated".
+    _, model = build_lecture_deck("Define variables. Explain loops.", title="Intro to Python")
+    assert model["profile"] == "programming"
+    assert model["sections"]
+    assert all(s["provenance"] in ("curated", "synthesized", "gap") for s in model["sections"])
+    assert any(s["provenance"] == "curated" for s in model["sections"])
+    assert set(model["provenanceSummary"]) <= {"curated", "synthesized", "gap", "none"}
+
+
+def test_provenance_in_speaker_notes():
+    from knowledge.lecture import build_lecture_deck
+
+    pptx_bytes, _ = build_lecture_deck("Define variables.", title="Intro to Python")
+    deck = Presentation(io.BytesIO(pptx_bytes))
+    notes = "\n".join(s.notes_slide.notes_text_frame.text for s in deck.slides if s.has_notes_slide)
+    assert "Provenance: curated" in notes
+
+
+def test_lecture_format_json_returns_structured_model(client, monkeypatch):
+    monkeypatch.delenv("API_KEY", raising=False)
+    monkeypatch.setattr(
+        service_module,
+        "build_lecture_deck",
+        lambda objectives, title, **kwargs: (
+            b"PKxx",
+            {"title": title, "profile": "programming", "objectives": 1,
+             "sections": [{"provenance": "curated", "confidence": "high"}],
+             "provenanceSummary": {"curated": 1}},
+        ),
+    )
+    res = client.post("/api/v1/lecture?format=json", json={"objectives": "define variables and loops"})
+    assert res.status_code == 200
+    assert res.mimetype == "application/json"
+    data = res.get_json()
+    assert data["profile"] == "programming"
+    assert data["sections"][0]["provenance"] == "curated"
+
+
+def test_lecture_default_still_returns_pptx_binary(client, monkeypatch):
+    monkeypatch.delenv("API_KEY", raising=False)
+    monkeypatch.setattr(
+        service_module,
+        "build_lecture_deck",
+        lambda objectives, title, **kwargs: (b"PK\x03\x04xx", {"objectives": 1}),
+    )
+    res = client.post("/api/v1/lecture", json={"objectives": "define variables and loops"})
+    assert res.mimetype == PPTX_MIMETYPE
+    assert res.data == b"PK\x03\x04xx"

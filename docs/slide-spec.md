@@ -178,6 +178,18 @@ house style mirrors it:
 Everything is deterministic. Curated concepts (see
 [concept_library.py](../knowledge/concept_library.py)) ship a hand-authored,
 fully distinct unit. For an *uncurated* concept whose example is retrieved from
-the web, the walkthrough is derived line-by-line by a rule-based describer and
-the practice reuses the example as its reference; with no LLM to author a fresh
-solution, the fallback answer reuses the worked example.
+the web, the walkthrough is derived line-by-line by a rule-based describer; a
+distinct second retrieved snippet is used for the answer when one is found.
+**Curation is a quality boost, not a requirement** — every objective gets a
+complete unit (an uncurated one falls back to explanation → illustration →
+verb-aware review questions). No objective is ever a bare slide.
+
+## 9. Provenance & confidence
+
+Every section is tagged `curated`, `synthesized`, or `gap` plus a confidence
+level. This is surfaced in the slide's speaker notes and in the structured
+`?format=json` response (`sections[].provenance/confidence/needsReview`, plus a
+deck-level `provenanceSummary`), so a consuming app can trust, route, or flag any
+section. Curated = engine-authored; synthesized = assembled from cited public
+sources (verify); gap = no reliable source (needs review). The homework/file
+inputs never appear in the deck — they only shape coverage and bias retrieval.
