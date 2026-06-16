@@ -11,6 +11,7 @@ from .ranking import rank
 from .sources.duckduckgo import DuckDuckGoSource
 from .sources.stackexchange import StackExchangeSource
 from .sources.wikipedia import (
+    RosettaCodeSource,
     SimpleWikipediaSource,
     WikibooksSource,
     WikipediaSource,
@@ -29,6 +30,7 @@ _wikipedia = WikipediaSource()
 _simple_wikipedia = SimpleWikipediaSource()
 _wikiversity = WikiversitySource()
 _wikibooks = WikibooksSource()
+_rosettacode = RosettaCodeSource()
 _wiktionary = WiktionarySource()
 _stackoverflow = StackExchangeSource("stackoverflow", "Stack Overflow", 0.9)
 _cseducators = StackExchangeSource("cseducators", "CS Educators Stack Exchange", 0.85)
@@ -62,7 +64,10 @@ def select_sources(query, domain=None):
 
     # Deck-profile routing (lecture flow only; default domain=None is unchanged).
     if domain == "programming":
-        for source in (_stackoverflow, _cseducators):
+        # Code Q&A (Stack Overflow / CS Educators), task samples (Rosetta Code),
+        # and programming textbooks (Wikibooks) — the experts for idioms/tasks
+        # that general encyclopedias don't cover.
+        for source in (_stackoverflow, _cseducators, _rosettacode, _wikibooks):
             if source not in sources:
                 sources.append(source)
     elif domain == "quantitative":

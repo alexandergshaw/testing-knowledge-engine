@@ -250,6 +250,19 @@ class SimpleWikipediaSource(MediaWikiSource):
     harvest_lists = False
 
 
+class RosettaCodeSource(MediaWikiSource):
+    # Same MediaWiki API (rosettacode.org/w/api.php, extracts supported). Pages
+    # are programming *tasks* ("Reverse a string", "Sum of a series"), so the
+    # page title is a task name, not the concept — relevance is judged by content
+    # (it's in synthesize.CONTENT_RELEVANCE_SOURCES). Good for idioms/tasks that
+    # general encyclopedias don't title an article for.
+    host = "rosettacode.org"
+    name = "Rosetta Code"
+    trust = 0.85
+    intro_only = True        # the task description (intro) is the on-topic prose
+    harvest_lists = False
+
+
 class WikibooksSource(MediaWikiSource):
     host = "en.wikibooks.org"
     name = "Wikibooks"

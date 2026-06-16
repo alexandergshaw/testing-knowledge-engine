@@ -78,6 +78,15 @@ def test_select_sources_domain_routing():
     assert pipeline._wikiversity in quant and pipeline._wikibooks in quant
 
 
+def test_programming_routing_includes_rosetta_and_wikibooks():
+    routed = pipeline.select_sources(analyze("Write a function"), domain="programming")
+    assert pipeline._rosettacode in routed
+    assert pipeline._wikibooks in routed
+    # Rosetta is configured against its MediaWiki API and judged by content.
+    assert pipeline._rosettacode.host == "rosettacode.org"
+    assert pipeline._rosettacode.name == "Rosetta Code"
+
+
 def test_select_sources_default_domain_unchanged():
     # domain=None must be identical to before (so the retrieval benchmark holds).
     query = analyze("Use the accumulator pattern to process data")
