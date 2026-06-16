@@ -84,6 +84,14 @@ rendered). See [docs/lecture-upload.md](docs/lecture-upload.md).
 `knowledge/lecture.py`:
 - `parse_objectives` is format-agnostic (inline numbered/bulleted lists, lead-in
   prose, run-on action-verb sentences, or a single objective).
+- **Curation is a quality boost, never a requirement.** *Every* objective gets a
+  complete unit; whether it's curated only changes how that unit is built (and
+  its labeled confidence — see provenance below). `extract_concepts`/quant
+  matching are fast-path *recognizers* for the curated rich units, not gates — an
+  unrecognized objective ("accumulator pattern", "Math functions") still gets a
+  full **synthesized** unit (explanation → illustration → verb-aware review
+  questions, or a retrieved code unit with a distinct second snippet for the
+  answer). No objective is ever a bare slide, for any subject.
 - **Curated content first** ([knowledge/concept_library.py](knowledge/concept_library.py)):
   common programming concepts (Variables, Data Types, Loops, Conditionals,
   Functions, Classes…) and intro-CS topics (Real-World CS, Problem-Solving,

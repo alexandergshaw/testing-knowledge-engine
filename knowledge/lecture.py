@@ -313,17 +313,31 @@ def _infer_language(objectives, title):
 def _first_code(passages, ranked):
     """First usable code block, preferring passages backing the top-ranked
     sentences. Returns (lines, passage) or (None, None)."""
+    blocks = _code_blocks(passages, ranked, limit=1)
+    return blocks[0] if blocks else (None, None)
+
+
+def _code_blocks(passages, ranked, limit=2):
+    """Up to `limit` *distinct* usable code blocks (deduped by content), preferring
+    passages backing the top-ranked sentences. Returns [(lines, passage), ...].
+    A second distinct block lets a retrieved unit show a genuinely different
+    answer from its example."""
     ordered, seen = [], set()
     for passage in [s.passage for s in ranked] + list(passages):
         if id(passage) not in seen:
             seen.add(id(passage))
             ordered.append(passage)
+    blocks, contents = [], set()
     for passage in ordered:
         for block in passage.code or []:
             lines = _code_lines(block)
-            if lines:
-                return lines, passage
-    return None, None
+            key = "\n".join(lines)
+            if lines and key not in contents:
+                contents.add(key)
+                blocks.append((lines, passage))
+                if len(blocks) >= limit:
+                    return blocks
+    return blocks
 
 
 def _concept_code(concept, language):
@@ -343,13 +357,16 @@ def _concept_code(concept, language):
     try:
         passages = fetch(query, select_sources(query))
         ranked = rank(query, passages) if passages else []
-        lines, passage = _first_code(passages, ranked)
-        if lines:
+        blocks = _code_blocks(passages, ranked, limit=2)
+        if blocks:
+            lines, passage = blocks[0]
             result = {
                 "kind": "code",
                 "concept": concept,
                 "text": sanitize_layman(_best_example_text(ranked)) or f"A worked {concept.lower()} example.",
                 "lines": lines,
+                # a distinct second snippet for a genuinely different answer, if found
+                "answer_lines": blocks[1][0] if len(blocks) > 1 else None,
                 "language": language,
                 "title": passage.title,
                 "url": passage.url,
@@ -415,6 +432,13 @@ def _concept_unit(concept, language):
     if not fetched:
         return None
     lines = fetched["lines"]
+    # Prefer a distinct second snippet as the answer; fall back to the example
+    # (an honest "here's the worked version" when only one snippet was found).
+    answer_lines = fetched.get("answer_lines")
+    if answer_lines:
+        answer = {"caption": "An alternative, runnable solution.", "lines": list(answer_lines)}
+    else:
+        answer = {"caption": "A correct, runnable version of the example.", "lines": list(lines)}
     return {
         "concept": concept,
         "language": fetched.get("language", language),
@@ -424,7 +448,7 @@ def _concept_unit(concept, language):
             f"Recreate this {concept.lower()} example yourself, from scratch.",
             "Run it and confirm you get the same result.",
         ],
-        "answer": {"caption": "A correct, runnable version of the example.", "lines": list(lines)},
+        "answer": answer,
         "title": fetched.get("title", ""),
         "url": fetched.get("url", ""),
         "source": fetched.get("source", ""),
@@ -609,22 +633,23 @@ def _curated_illustration(objective):
     return concept_library.illustration_for(topic) if topic else None
 
 
-def _build_objective(objective, context="", programming_lecture=False, homework_tokens=None):
+def _build_objective(objective, context="", homework_tokens=None):
     # Prefer curated, Gemini-quality layman content — no network, no jargon.
     curated = _curated_explanation(objective)
     if curated is not None:
-        examples = []
-        if not programming_lecture:
-            illustration = _curated_illustration(objective)
-            if illustration:
-                examples = [
-                    {"kind": "prose", "text": illustration, "title": "", "url": "", "source": "Curated"}
-                ]
+        illustration = _curated_illustration(objective)
+        examples = (
+            [{"kind": "prose", "text": illustration, "title": "", "url": "", "source": "Curated"}]
+            if illustration
+            else []
+        )
         return ObjectiveResult(
             objective=objective, points=curated, examples=examples, citations=[], confidence="high"
         )
 
-    # Fallback: retrieve, synthesize, and strip encyclopedic markup.
+    # Fallback: retrieve, synthesize, and strip encyclopedic markup. Examples are
+    # always extracted (an illustration backs the conceptual unit when this
+    # objective gets no richer code/worked unit); render precedence avoids dupes.
     query = analyze(objective)
     if context:
         query.search_terms = f"{query.search_terms} {context}".strip()
@@ -637,17 +662,15 @@ def _build_objective(objective, context="", programming_lecture=False, homework_
     return ObjectiveResult(
         objective=objective,
         points=points,
-        examples=extract_examples(
-            query, passages, ranked, programming_lecture, homework_tokens=homework_tokens
-        ),
+        examples=extract_examples(query, passages, ranked, homework_tokens=homework_tokens),
         citations=synth["citations"],
         confidence=synth["confidence"],
     )
 
 
-def _safe_build(objective, context="", programming_lecture=False, homework_tokens=None):
+def _safe_build(objective, context="", homework_tokens=None):
     try:
-        return _build_objective(objective, context, programming_lecture, homework_tokens)
+        return _build_objective(objective, context, homework_tokens)
     except Exception:
         log.warning("objective failed: %s", objective, exc_info=True)
         return ObjectiveResult(objective)
@@ -997,16 +1020,48 @@ def _attach_concept_examples(results, objectives, title):
             owner[concept].concept_examples.append(unit)
 
 
-def _review_questions(topic, next_topic=None):
-    """Deterministic recall -> explain -> apply (-> relate) prompts for a topic.
-    No LLM: standard study questions the instructor answers from the (cited)
-    explanation in the slide's notes."""
+# Objective verbs that change the kind of practice question worth asking.
+_ACTION_VERBS = frozenset(
+    """apply use implement write build create develop construct solve design
+    calculate compute produce perform configure deploy model derive""".split()
+)
+_COMPARE_VERBS = frozenset("compare differentiate distinguish contrast relate".split())
+_ANALYZE_VERBS = frozenset("analyze analyse evaluate assess critique interpret examine".split())
+
+
+def _objective_verb(objective):
+    match = re.match(r"\s*([a-zA-Z]+)", objective or "")
+    verb = match.group(1).lower() if match else ""
+    return verb if verb in BLOOM_VERBS else ""
+
+
+def _review_questions(topic, objective="", next_topic=None):
+    """Deterministic study questions for a topic, tuned to the objective's Bloom
+    verb (recall vs apply vs compare vs analyze). No LLM: the instructor answers
+    them from the cited explanation in the slide's notes."""
     topic = topic.strip().rstrip(".")
-    questions = [
-        f"Define {topic} in your own words.",
-        f"Explain why {topic} is important.",
-        f"Describe a real-world example of {topic}.",
-    ]
+    verb = _objective_verb(objective)
+    questions = [f"Define {topic} in your own words."]
+    if verb in _ACTION_VERBS:
+        questions += [
+            f"Outline the steps to {verb} {topic}.",
+            f"What is a common mistake to avoid when working with {topic}?",
+        ]
+    elif verb in _COMPARE_VERBS:
+        questions += [
+            f"Compare {topic} with a related approach.",
+            f"When would you choose {topic}?",
+        ]
+    elif verb in _ANALYZE_VERBS:
+        questions += [
+            f"Evaluate when {topic} is the right choice.",
+            f"What are the trade-offs of {topic}?",
+        ]
+    else:
+        questions += [
+            f"Explain why {topic} is important.",
+            f"Describe a real-world example of {topic}.",
+        ]
     if next_topic:
         nxt = next_topic.strip().rstrip(".")
         if nxt and nxt.lower() != topic.lower():
@@ -1015,12 +1070,12 @@ def _review_questions(topic, next_topic=None):
 
 
 def _attach_review_questions(results):
-    """Conceptual (non-programming) lectures: give each objective a short set of
-    review questions, relating each to the next objective's topic."""
+    """The universal baseline: give each objective a short set of review
+    questions, tuned to its verb and relating each to the next objective's topic."""
     topics = [_topic_title(result.objective) for result in results]
     for index, result in enumerate(results):
         next_topic = topics[index + 1] if index + 1 < len(topics) else None
-        result.questions = _review_questions(topics[index], next_topic)
+        result.questions = _review_questions(topics[index], result.objective, next_topic)
 
 
 def _attach_quant_units(results):
@@ -1133,22 +1188,25 @@ def build_lecture_deck(
         context = (context + " " + " ".join(extra_terms)).strip()
 
     with ThreadPoolExecutor(max_workers=min(len(objectives) + len(prereq_objectives), 8)) as executor:
-        builder = lambda o: _safe_build(o, context, programming_lecture, homework_tokens)
+        builder = lambda o: _safe_build(o, context, homework_tokens)
         results = list(executor.map(builder, objectives))
         prereq_results = list(executor.map(builder, prereq_objectives))
     for result in prereq_results:
         result.prerequisite = True
     results = results + prereq_results
 
+    # Rich units where the concept is recognized: code units (programming) or
+    # worked-problem units (quantitative). extract_concepts/quant matching is a
+    # fast-path recognizer here, not a gate.
     if profile == "programming":
         _attach_concept_examples(results, objectives + prereq_objectives, title)
     elif profile == "quantitative":
         _attach_quant_units(results)
-        # Objectives that matched no worked-problem concept fall back to the
-        # conceptual rhythm (illustration + review questions).
-        _attach_review_questions([r for r in results if not r.quant_units])
-    else:
-        _attach_review_questions(results)
+
+    # Universal baseline: every objective with no rich unit gets the conceptual
+    # treatment (illustration + review questions). No objective is ever a bare
+    # slide — the deck is complete for any subject, curated or not.
+    _attach_review_questions([r for r in results if not r.concept_examples and not r.quant_units])
 
     payload = build_module_deck(title, results, source_label=source_label)
     summary = {

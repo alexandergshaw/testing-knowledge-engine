@@ -519,12 +519,21 @@ def test_classify_subject_programming_vs_conceptual():
 def test_review_questions_generation():
     from knowledge.lecture import _review_questions
 
-    qs = _review_questions("cognitive dissonance", "operant conditioning")
+    qs = _review_questions("cognitive dissonance", "Explain cognitive dissonance", "operant conditioning")
     assert qs[0] == "Define cognitive dissonance in your own words."
-    assert any("real-world example" in q for q in qs)
+    assert any("real-world example" in q for q in qs)            # default (explain) branch
     assert qs[-1] == "How does cognitive dissonance relate to operant conditioning?"
     # No next topic -> no relate question.
     assert all("relate to" not in q for q in _review_questions("entropy"))
+
+
+def test_review_questions_are_verb_aware():
+    from knowledge.lecture import _review_questions
+
+    apply_qs = _review_questions("recursion", "Implement recursion")
+    assert any("Outline the steps to implement recursion" in q for q in apply_qs)
+    compare_qs = _review_questions("two sorting methods", "Compare two sorting methods")
+    assert any(q.startswith("Compare two sorting methods") for q in compare_qs)
 
 
 def test_conceptual_deck_structure():
@@ -855,3 +864,45 @@ def test_lecture_homeworkfile_unsupported_type(client, monkeypatch):
     )
     assert res.status_code == 415
     assert res.get_json()["error"]["code"] == "unsupported_media_type"
+
+
+# --- C2: curation-independent generality ------------------------------------
+
+
+def test_uncurated_programming_objective_gets_baseline_not_bare(monkeypatch):
+    import knowledge.lecture as lecture
+
+    # An uncurated, unrecognized skill in a programming deck must still get a
+    # full unit (the conceptual baseline), never a bare concept slide.
+    monkeypatch.setattr(
+        lecture,
+        "_build_objective",
+        lambda objective, context="", homework_tokens=None: ObjectiveResult(
+            objective=objective, points=["A point."], confidence="medium"
+        ),
+    )
+    pptx_bytes, _ = lecture.build_lecture_deck(
+        "Use the accumulator pattern to process data.", title="Python Programming"
+    )
+    titles = [slide_title(s) for s in Presentation(io.BytesIO(pptx_bytes)).slides]
+    assert any(t.startswith("Check Your Understanding") for t in titles)
+    assert not any(t.startswith("Example:") for t in titles)  # no curated/code unit existed
+
+
+def test_concept_unit_uses_distinct_second_snippet_for_answer(monkeypatch):
+    import knowledge.lecture as lecture
+
+    monkeypatch.setattr(lecture.concept_library, "unit_for", lambda name, language="": None)
+    monkeypatch.setattr(
+        lecture,
+        "_concept_code",
+        lambda concept, language: {
+            "kind": "code", "concept": concept, "text": "An example.",
+            "lines": ["a = 1"], "answer_lines": ["b = 2"], "language": language,
+            "title": "t", "url": "u", "source": "Stack Overflow",
+        },
+    )
+    unit = lecture._concept_unit("Widgets", "Python")
+    assert unit["example"]["lines"] == ["a = 1"]
+    assert unit["answer"]["lines"] == ["b = 2"]              # distinct from the example
+    assert "alternative" in unit["answer"]["caption"].lower()
