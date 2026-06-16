@@ -828,10 +828,13 @@ def _add_case_study(deck, title, results, footer):
     add_bullet_slide(deck, case["title"], case["bullets"], notes="\n".join(notes), footer=footer)
 
 
-def build_module_deck(title, results):
+def build_module_deck(title, results, source_label=None):
     deck = new_deck()
     footer = title or "Module Lecture"
-    add_title_slide(deck, title or "Module Lecture", f"{len(results)} learning objectives")
+    subtitle = f"{len(results)} learning objectives"
+    if source_label:
+        subtitle += f" · from {source_label}"
+    add_title_slide(deck, title or "Module Lecture", subtitle)
 
     # Module overview (agenda) — clean topic titles, compact list slide.
     add_list_slide(
@@ -969,14 +972,15 @@ def _attach_quant_units(results):
             result.quant_units.append({"concept": name, **unit})
 
 
-def build_lecture_deck(objectives_text, title="Module Lecture"):
-    """The /api/v1/lecture entry point: returns (pptx_bytes, summary)."""
+def build_lecture_deck(objectives_text, title="Module Lecture", source_label=None):
+    """The /api/v1/lecture entry point: returns (pptx_bytes, summary).
+    `source_label` (an uploaded file's name) is shown on the title slide."""
     objectives = parse_objectives(objectives_text)
     if not objectives:
         raise LectureError("No learning objectives found in the provided text.")
 
     title = (title or "Module Lecture").strip() or "Module Lecture"
-    cache_key = (title.lower(), tuple(o.lower() for o in objectives))
+    cache_key = (title.lower(), tuple(o.lower() for o in objectives), source_label or "")
     cached = _cache.get(cache_key)
     if cached is not None:
         return cached
@@ -1002,7 +1006,7 @@ def build_lecture_deck(objectives_text, title="Module Lecture"):
     else:
         _attach_review_questions(results)
 
-    payload = build_module_deck(title, results)
+    payload = build_module_deck(title, results, source_label=source_label)
     summary = {
         "title": title,
         "objectives": len(objectives),

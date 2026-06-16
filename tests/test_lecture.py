@@ -458,7 +458,9 @@ def test_lecture_route_serves_pptx(client, monkeypatch):
     monkeypatch.setattr(
         service_module,
         "build_lecture_deck",
-        lambda objectives, title: (b"PK\x03\x04fakepptx", {"objectives": 2, "title": title, "items": []}),
+        lambda objectives, title, source_label=None: (
+            b"PK\x03\x04fakepptx", {"objectives": 2, "title": title, "items": []}
+        ),
     )
     res = client.post(
         "/api/v1/lecture",
@@ -473,7 +475,7 @@ def test_lecture_route_accepts_list(client, monkeypatch):
     captured = {}
     monkeypatch.delenv("API_KEY", raising=False)
 
-    def fake(objectives, title):
+    def fake(objectives, title, source_label=None):
         captured["objectives"] = objectives
         return (b"x", {"objectives": 2, "title": title, "items": []})
 
@@ -635,3 +637,123 @@ def test_quant_unmatched_objective_falls_back_to_conceptual(monkeypatch):
     titles = [slide_title(s) for s in Presentation(io.BytesIO(pptx_bytes)).slides]
     assert any(t.startswith("Worked Example: Quadratic") for t in titles)   # matched -> quant unit
     assert any(t.startswith("Check Your Understanding:") for t in titles)   # unmatched -> conceptual
+
+
+# --- file upload on POST /api/v1/lecture ------------------------------------
+
+
+def _capture_lecture(monkeypatch):
+    captured = {}
+
+    def fake(objectives, title, source_label=None):
+        captured.update(objectives=objectives, title=title, source_label=source_label)
+        return (b"PK\x03\x04fake", {"objectives": 1, "title": title, "items": []})
+
+    monkeypatch.setattr(service_module, "build_lecture_deck", fake)
+    return captured
+
+
+def test_lecture_accepts_text_file_upload(client, monkeypatch):
+    monkeypatch.delenv("API_KEY", raising=False)
+    captured = _capture_lecture(monkeypatch)
+    res = client.post(
+        "/api/v1/lecture",
+        data={"file": (io.BytesIO(b"Define variables\nExplain loops\nWrite functions"), "notes.txt")},
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 200
+    assert res.mimetype == PPTX_MIMETYPE
+    assert "Define variables" in captured["objectives"]
+    assert captured["source_label"] == "notes.txt"
+
+
+def test_lecture_upload_merges_file_then_objectives(client, monkeypatch):
+    monkeypatch.delenv("API_KEY", raising=False)
+    captured = _capture_lecture(monkeypatch)
+    client.post(
+        "/api/v1/lecture",
+        data={
+            "file": (io.BytesIO(b"From the file"), "notes.txt"),
+            "objectives": "Typed objective about recursion",
+            "title": "My Module",
+        },
+        content_type="multipart/form-data",
+    )
+    objectives = captured["objectives"]
+    assert objectives.index("From the file") < objectives.index("Typed objective")
+    assert captured["title"] == "My Module"
+
+
+def test_lecture_upload_pptx_extracts_slide_text(client, monkeypatch):
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    monkeypatch.delenv("API_KEY", raising=False)
+    captured = _capture_lecture(monkeypatch)
+    deck = Presentation()
+    for text in ("Introduction to Supply and Demand", "Market equilibrium"):
+        slide = deck.slides.add_slide(deck.slide_layouts[6])
+        slide.shapes.add_textbox(Inches(1), Inches(1), Inches(6), Inches(1)).text_frame.text = text
+    buf = io.BytesIO()
+    deck.save(buf)
+    res = client.post(
+        "/api/v1/lecture",
+        data={"file": (io.BytesIO(buf.getvalue()), "econ.pptx")},
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 200
+    assert "Supply and Demand" in captured["objectives"]
+
+
+def test_lecture_upload_requires_file_or_objectives(client, monkeypatch):
+    monkeypatch.delenv("API_KEY", raising=False)
+    res = client.post("/api/v1/lecture", data={}, content_type="multipart/form-data")
+    assert res.status_code == 400
+    assert res.get_json()["error"]["code"] == "invalid_request"
+
+
+def test_lecture_upload_unsupported_type(client, monkeypatch):
+    monkeypatch.delenv("API_KEY", raising=False)
+    res = client.post(
+        "/api/v1/lecture",
+        data={"file": (io.BytesIO(b"MZ\x90\x00"), "malware.exe")},
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 415
+    assert res.get_json()["error"]["code"] == "unsupported_media_type"
+
+
+def test_lecture_upload_too_large(client, monkeypatch):
+    monkeypatch.delenv("API_KEY", raising=False)
+    monkeypatch.setattr(service_module, "MAX_UPLOAD_BYTES", 10)
+    res = client.post(
+        "/api/v1/lecture",
+        data={"file": (io.BytesIO(b"this is more than ten bytes"), "notes.txt")},
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 413
+    assert res.get_json()["error"]["code"] == "payload_too_large"
+
+
+def test_lecture_upload_no_extractable_text(client, monkeypatch):
+    monkeypatch.delenv("API_KEY", raising=False)
+    res = client.post(
+        "/api/v1/lecture",
+        data={"file": (io.BytesIO(b"   "), "empty.txt")},
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 422
+    assert res.get_json()["error"]["code"] == "invalid_request"
+
+
+def test_lecture_json_path_unchanged(client, monkeypatch):
+    monkeypatch.delenv("API_KEY", raising=False)
+    _capture_lecture(monkeypatch)
+    res = client.post("/api/v1/lecture", json={"objectives": "define variables and explain loops"})
+    assert res.status_code == 200
+
+
+def test_openapi_lecture_documents_multipart(client):
+    spec = client.get("/api/v1/openapi.json").get_json()
+    content = spec["paths"]["/api/v1/lecture"]["post"]["requestBody"]["content"]
+    assert "multipart/form-data" in content and "application/json" in content

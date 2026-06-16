@@ -66,6 +66,15 @@ for each objective, there's an explanation slide plus worked-example slide(s),
 with talking points and source citations in the speaker notes. Zero AI: every
 slide is extracted from cited sources.
 
+**Or seed it with a file.** `POST /api/v1/lecture` also accepts
+`multipart/form-data` with a `file` — an existing `.pptx`/`.docx`/`.pdf`/`.xlsx`/
+`.odt`/plain-text artifact. Its text is extracted server-side
+([knowledge/extract.py](knowledge/extract.py)) and parsed into the same objective
+signal (file text first, then any `objectives` field). At least one of
+`file`/`objectives` is required; the deck output is unchanged (the source
+filename is noted on the title slide). Still deterministic — the upload is just a
+richer way to supply objectives, not free-form LLM context.
+
 `knowledge/lecture.py`:
 - `parse_objectives` is format-agnostic (inline numbered/bulleted lists, lead-in
   prose, run-on action-verb sentences, or a single objective).
@@ -140,6 +149,12 @@ non-bullet slide).
 curl -X POST http://localhost:5050/api/v1/lecture \
   -H "Content-Type: application/json" \
   -d '{"title": "Intro to Python", "objectives": "Students will be able to define variables, explain control flow, and write functions."}' \
+  --output module-lecture.pptx
+
+# Or seed it from an existing deck/doc (multipart):
+curl -X POST http://localhost:5050/api/v1/lecture \
+  -F "file=@existing-deck.pptx" \
+  -F "title=Intro to Python" \
   --output module-lecture.pptx
 ```
 

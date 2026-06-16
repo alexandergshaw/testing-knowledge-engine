@@ -15,7 +15,7 @@ from functools import wraps
 from flask import Blueprint, current_app, g, jsonify, request, send_file
 
 import observability
-from knowledge import artifacts, schedule
+from knowledge import artifacts, extract, schedule
 from knowledge.copilot import PROFILES, CopilotError, build_copilot_prompt
 from knowledge.lecture import LectureError, build_lecture_deck
 from knowledge.materials import MaterialsError, build_materials
@@ -380,10 +380,14 @@ OPENAPI_SPEC = {
         },
         "/api/v1/lecture": {
             "post": {
-                "summary": "Generate a PowerPoint lecture from module objectives",
+                "summary": "Generate a PowerPoint lecture from objectives or an uploaded file",
                 "description": (
                     "Returns a .pptx: per objective, an explanation slide plus "
-                    "worked-example slide(s) with talking points in speaker notes."
+                    "worked-example slide(s) with talking points in speaker notes. "
+                    "Accepts either a JSON body, or multipart/form-data with a `file` "
+                    "(e.g. a .pptx/.docx/.pdf deck) whose text is extracted and parsed "
+                    "into objectives. At least one of `file` / `objectives` is required; "
+                    "when both are given, the file's text is merged ahead of `objectives`."
                 ),
                 "security": [{"ApiKeyAuth": []}],
                 "requestBody": {
@@ -402,13 +406,32 @@ OPENAPI_SPEC = {
                                 },
                             },
                             "example": LECTURE_EXAMPLE,
-                        }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "file": {
+                                        "type": "string",
+                                        "format": "binary",
+                                        "description": "An artifact to seed the lecture (.pptx, .docx, .pdf, .xlsx, .odt/.odp/.ods, or plain text). Its extracted text becomes objective/topic signal.",
+                                    },
+                                    "objectives": {
+                                        "type": "string",
+                                        "description": "Optional when a file is supplied; merged after the file's text.",
+                                    },
+                                    "title": {"type": "string"},
+                                },
+                            }
+                        },
                     },
                 },
                 "responses": {
                     "200": {"description": "module-lecture.pptx (PowerPoint)"},
-                    "400": {"description": "Invalid request"},
-                    "422": {"description": "No objectives could be parsed"},
+                    "400": {"description": "Neither file nor objectives supplied, or merged objectives out of range"},
+                    "413": {"description": "Uploaded file too large"},
+                    "415": {"description": "Unsupported file type"},
+                    "422": {"description": "No extractable text and no usable objectives"},
                 },
             }
         },
@@ -574,15 +597,65 @@ def make_copilot_prompt():
     return jsonify(result)
 
 
+def _lecture_inputs_from_upload():
+    """Parse multipart inputs for /lecture (a file and/or objectives). Returns
+    (objectives, title, source_label, error) — error is None on success or an
+    error_response tuple to return directly. The extracted file text is merged
+    with any objectives field (file text first) and capped to the objectives
+    limit, so an uploaded deck is just a richer way to supply objectives."""
+    upload = request.files.get("file")
+    objectives_field = (request.form.get("objectives") or "").strip()
+    title = (request.form.get("title") or "Module Lecture").strip()
+
+    if upload is None or not upload.filename:
+        if not objectives_field:
+            return None, None, None, error_response(
+                "invalid_request", "Provide learning objectives or upload a file.", 400
+            )
+        return objectives_field, title, None, None
+
+    if not extract.is_supported(upload.filename):
+        return None, None, None, error_response(
+            "unsupported_media_type",
+            "Unsupported file type. Upload a .pptx, .docx, .pdf, .xlsx, or plain-text file.",
+            415,
+        )
+    data = upload.read()
+    if len(data) > MAX_UPLOAD_BYTES:
+        return None, None, None, error_response(
+            "payload_too_large", f"File too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB).", 413
+        )
+
+    extracted = extract.extract_text(upload.filename, data)
+    if not extracted and not objectives_field:
+        return None, None, None, error_response(
+            "invalid_request",
+            "Could not extract any text from the file (it may be empty or scanned). "
+            "Add objectives or upload a file with selectable text.",
+            422,
+        )
+
+    merged = f"{extracted}\n\n{objectives_field}".strip() if objectives_field else extracted
+    return merged[:MAX_OBJECTIVES_LENGTH], title, upload.filename, None
+
+
 @api.route("/api/v1/lecture", methods=["POST"])
 @require_api_key
 def make_lecture():
-    data = request.get_json(silent=True) or {}
-    objectives = data.get("objectives")
-    if isinstance(objectives, list):
-        objectives = "\n".join(str(item) for item in objectives)
-    objectives = (objectives or "").strip()
-    title = (data.get("title") or "Module Lecture").strip()
+    # Two accepted shapes: multipart/form-data (file and/or objectives) or the
+    # original JSON body. JSON behavior is unchanged.
+    if (request.content_type or "").startswith("multipart/form-data"):
+        objectives, title, source_label, error = _lecture_inputs_from_upload()
+        if error:
+            return error
+    else:
+        data = request.get_json(silent=True) or {}
+        objectives = data.get("objectives")
+        if isinstance(objectives, list):
+            objectives = "\n".join(str(item) for item in objectives)
+        objectives = (objectives or "").strip()
+        title = (data.get("title") or "Module Lecture").strip()
+        source_label = None
 
     if len(objectives) < MIN_OBJECTIVES_LENGTH:
         return error_response("invalid_request", "Provide the module's learning objectives.", 400)
@@ -594,7 +667,7 @@ def make_lecture():
         )
 
     try:
-        payload, summary = build_lecture_deck(objectives, title)
+        payload, summary = build_lecture_deck(objectives, title, source_label=source_label)
     except LectureError as error:
         return error_response("invalid_request", str(error), 422)
     except Exception:
@@ -605,7 +678,7 @@ def make_lecture():
         "lecture",
         payload,
         PPTX_MIMETYPE,
-        {"title": title, "objectives": objectives[:1000], "summary": summary},
+        {"title": title, "objectives": objectives[:1000], "sourceFile": source_label, "summary": summary},
     )
     return send_file(
         io.BytesIO(payload),
