@@ -403,6 +403,10 @@ OPENAPI_SPEC = {
                                         "description": "Free-form objectives (list or prose).",
                                     },
                                     "title": {"type": "string"},
+                                    "homework": {
+                                        "type": "string",
+                                        "description": "Optional assignment text. The deck adds prerequisite coverage for the concepts it requires; the homework itself is never restated, solved, or shown.",
+                                    },
                                 },
                             },
                             "example": LECTURE_EXAMPLE,
@@ -421,6 +425,15 @@ OPENAPI_SPEC = {
                                         "description": "Optional when a file is supplied; merged after the file's text.",
                                     },
                                     "title": {"type": "string"},
+                                    "homework": {
+                                        "type": "string",
+                                        "description": "Optional assignment text (see JSON `homework`).",
+                                    },
+                                    "homeworkFile": {
+                                        "type": "string",
+                                        "format": "binary",
+                                        "description": "Optional assignment as a file; extracted to text and used the same way as `homework`.",
+                                    },
                                 },
                             }
                         },
@@ -597,38 +610,66 @@ def make_copilot_prompt():
     return jsonify(result)
 
 
-def _lecture_inputs_from_upload():
-    """Parse multipart inputs for /lecture (a file and/or objectives). Returns
-    (objectives, title, source_label, error) — error is None on success or an
-    error_response tuple to return directly. The extracted file text is merged
-    with any objectives field (file text first) and capped to the objectives
-    limit, so an uploaded deck is just a richer way to supply objectives."""
-    upload = request.files.get("file")
-    objectives_field = (request.form.get("objectives") or "").strip()
-    title = (request.form.get("title") or "Module Lecture").strip()
-
+def _extract_upload(field, kind):
+    """(text, error) for an optional uploaded file field. error is an
+    error_response tuple (415/413) or None; text is "" when no file is present."""
+    upload = request.files.get(field)
     if upload is None or not upload.filename:
-        if not objectives_field:
-            return None, None, None, error_response(
-                "invalid_request", "Provide learning objectives or upload a file.", 400
-            )
-        return objectives_field, title, None, None
-
+        return "", None
     if not extract.is_supported(upload.filename):
-        return None, None, None, error_response(
+        return None, error_response(
             "unsupported_media_type",
-            "Unsupported file type. Upload a .pptx, .docx, .pdf, .xlsx, or plain-text file.",
+            f"Unsupported {kind} file type. Use .pptx, .docx, .pdf, .xlsx, or plain text.",
             415,
         )
     data = upload.read()
     if len(data) > MAX_UPLOAD_BYTES:
-        return None, None, None, error_response(
-            "payload_too_large", f"File too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB).", 413
+        return None, error_response(
+            "payload_too_large",
+            f"{kind.capitalize()} file too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB).",
+            413,
         )
+    return extract.extract_text(upload.filename, data), None
 
-    extracted = extract.extract_text(upload.filename, data)
+
+def _homework_from_multipart():
+    """(homework_text, error). Combines the `homework` field with a `homeworkFile`
+    upload (text first). Lenient: empty/over-cap is trimmed, not rejected, since
+    homework is supplemental guidance."""
+    homework_str = (request.form.get("homework") or "").strip()
+    extracted, error = _extract_upload("homeworkFile", "homework")
+    if error:
+        return None, error
+    combined = f"{homework_str}\n\n{extracted}".strip() if extracted else homework_str
+    return (combined[:MAX_OBJECTIVES_LENGTH] or None), None
+
+
+def _lecture_inputs_from_upload():
+    """Parse multipart inputs for /lecture (a source file and/or objectives, plus
+    optional homework). Returns (objectives, title, source_label, homework_text,
+    error) — error is None on success or an error_response tuple. The extracted
+    source-file text is merged with any objectives field (file text first) and
+    capped, so an uploaded deck is just a richer way to supply objectives."""
+    objectives_field = (request.form.get("objectives") or "").strip()
+    title = (request.form.get("title") or "Module Lecture").strip()
+
+    homework_text, hw_error = _homework_from_multipart()
+    if hw_error:
+        return None, None, None, None, hw_error
+
+    upload = request.files.get("file")
+    if upload is None or not upload.filename:
+        if not objectives_field:
+            return None, None, None, None, error_response(
+                "invalid_request", "Provide learning objectives or upload a file.", 400
+            )
+        return objectives_field, title, None, homework_text, None
+
+    extracted, error = _extract_upload("file", "source")
+    if error:
+        return None, None, None, None, error
     if not extracted and not objectives_field:
-        return None, None, None, error_response(
+        return None, None, None, None, error_response(
             "invalid_request",
             "Could not extract any text from the file (it may be empty or scanned). "
             "Add objectives or upload a file with selectable text.",
@@ -636,7 +677,7 @@ def _lecture_inputs_from_upload():
         )
 
     merged = f"{extracted}\n\n{objectives_field}".strip() if objectives_field else extracted
-    return merged[:MAX_OBJECTIVES_LENGTH], title, upload.filename, None
+    return merged[:MAX_OBJECTIVES_LENGTH], title, upload.filename, homework_text, None
 
 
 @api.route("/api/v1/lecture", methods=["POST"])
@@ -645,7 +686,7 @@ def make_lecture():
     # Two accepted shapes: multipart/form-data (file and/or objectives) or the
     # original JSON body. JSON behavior is unchanged.
     if (request.content_type or "").startswith("multipart/form-data"):
-        objectives, title, source_label, error = _lecture_inputs_from_upload()
+        objectives, title, source_label, homework_text, error = _lecture_inputs_from_upload()
         if error:
             return error
     else:
@@ -656,6 +697,7 @@ def make_lecture():
         objectives = (objectives or "").strip()
         title = (data.get("title") or "Module Lecture").strip()
         source_label = None
+        homework_text = ((data.get("homework") or "").strip()[:MAX_OBJECTIVES_LENGTH]) or None
 
     if len(objectives) < MIN_OBJECTIVES_LENGTH:
         return error_response("invalid_request", "Provide the module's learning objectives.", 400)
@@ -667,7 +709,9 @@ def make_lecture():
         )
 
     try:
-        payload, summary = build_lecture_deck(objectives, title, source_label=source_label)
+        payload, summary = build_lecture_deck(
+            objectives, title, source_label=source_label, homework_text=homework_text
+        )
     except LectureError as error:
         return error_response("invalid_request", str(error), 422)
     except Exception:
@@ -678,7 +722,13 @@ def make_lecture():
         "lecture",
         payload,
         PPTX_MIMETYPE,
-        {"title": title, "objectives": objectives[:1000], "sourceFile": source_label, "summary": summary},
+        {
+            "title": title,
+            "objectives": objectives[:1000],
+            "sourceFile": source_label,
+            "homework": bool(homework_text),
+            "summary": summary,
+        },
     )
     return send_file(
         io.BytesIO(payload),

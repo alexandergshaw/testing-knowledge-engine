@@ -723,9 +723,20 @@ def unit_for(name, language=""):
 
 
 def match_topic(text):
-    """Conceptual intro-CS topic name from objective text, or None."""
+    """Conceptual topic name from objective text, or None (first match)."""
     lowered = text.lower()
     for name, phrases in TOPIC_MATCHERS.items():
         if any(phrase in lowered for phrase in phrases):
             return name
     return None
+
+
+def find_topics(text):
+    """Every conceptual topic named anywhere in a block of text (e.g. mined from
+    a homework assignment), de-duplicated in match order."""
+    lowered = text.lower()
+    found = []
+    for name, phrases in TOPIC_MATCHERS.items():
+        if name not in found and any(phrase in lowered for phrase in phrases):
+            found.append(name)
+    return found

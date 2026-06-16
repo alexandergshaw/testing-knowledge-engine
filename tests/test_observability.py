@@ -69,7 +69,7 @@ def test_binary_response_logs_size_not_body(client, records, monkeypatch):
     # A .pptx response must never have its bytes read into the log.
     monkeypatch.setattr(
         service_module, "build_lecture_deck",
-        lambda objectives, title, source_label=None: (b"PKBINARYDATA", {"objectives": 1})
+        lambda objectives, title, **kwargs: (b"PKBINARYDATA", {"objectives": 1})
     )
     client.post("/api/v1/lecture", json={"objectives": "Define variables and explain control flow."})
     rec = records[0]

@@ -45,6 +45,12 @@ def test_unit_for_missing_concept_is_none():
     assert concept_library.unit_for("Nonexistent Concept") is None
 
 
+def test_find_topics_mines_multiple():
+    found = concept_library.find_topics("Cover photosynthesis and natural selection for the homework.")
+    assert "Photosynthesis" in found and "Natural Selection" in found
+    assert concept_library.find_topics("Random unrelated text") == []
+
+
 def test_match_topic():
     assert (
         concept_library.match_topic("Provide examples of computer science in the real world")

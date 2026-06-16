@@ -31,6 +31,10 @@ Content-Type: application/json
 | `file` | binary | one of `file`/`objectives` | The artifact to seed from. |
 | `objectives` | string | optional when `file` present | Merged **after** the file's extracted text. |
 | `title` | string | optional | Deck title + retrieval/language bias (as today). |
+| `homework` | string | optional | Assignment text — adds prerequisite coverage (see "Homework" below). |
+| `homeworkFile` | binary | optional | Assignment as a file; extracted to text, used the same as `homework`. |
+
+`homework` is also accepted in the JSON body.
 
 Rules (enforced server-side):
 - At least one of `file` / `objectives` must be present.
@@ -48,6 +52,30 @@ objective-parsing + source-retrieval pipeline as the `objectives` string. A deck
 is just a richer way to supply `objectives`; slide titles/bullets become topic
 signal, and the resulting deck is rebuilt from the engine's trusted sources, not
 copied from the upload.
+
+## Homework (prerequisite-aware coverage)
+Supply a homework assignment (`homework` text and/or a `homeworkFile`) and the
+deck prepares students to complete it — **without restating its questions,
+solving any problem, or revealing answers.**
+
+How it works in this deterministic engine: the homework text is mined for the
+**concepts it exercises** (same taxonomy used for objectives). Concepts the
+objectives don't already teach are added as extra **"Prerequisite Skills for the
+Assignment"** sections — taught in full (concept slide + worked example/practice/
+answer or illustration/review questions), but **kept off the title-slide agenda**.
+The homework text itself is never rendered (it's only parsed to concepts), so the
+no-leak guarantee holds by construction; retrieved examples that happen to echo
+the homework wording are additionally dropped. Worked/practice problems come from
+the engine's own curated/retrieved sources, so they are analogous to — never
+copies of — the assignment's questions.
+
+- Homework is fully optional and **additive** — absent ⇒ behavior is unchanged.
+- It does **not** add agenda objectives; it only adds prerequisite coverage
+  (capped at a handful of sections).
+- Lenient: empty/over-cap homework is ignored/trimmed, not rejected. An
+  unsupported `homeworkFile` type → `415`; an oversize one → `413`. If the
+  homework yields no recognizable concepts, the deck is produced as if none was
+  given.
 
 ## Supported file types
 Extracted server-side: `.pptx`, `.docx`, `.xlsx`, `.pdf`, `.odt`, `.odp`, `.ods`,

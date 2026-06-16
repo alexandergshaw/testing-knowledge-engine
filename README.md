@@ -75,6 +75,12 @@ signal (file text first, then any `objectives` field). At least one of
 filename is noted on the title slide). Still deterministic — the upload is just a
 richer way to supply objectives, not free-form LLM context.
 
+**Homework-aware.** Pass a `homework` string (or `homeworkFile`) and the deck adds
+**off-agenda "Prerequisite Skills for the Assignment"** sections covering the
+concepts the assignment needs — without ever restating its questions, solving a
+problem, or revealing answers (the homework is mined for concepts, never
+rendered). See [docs/lecture-upload.md](docs/lecture-upload.md).
+
 `knowledge/lecture.py`:
 - `parse_objectives` is format-agnostic (inline numbered/bulleted lists, lead-in
   prose, run-on action-verb sentences, or a single objective).

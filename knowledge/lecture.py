@@ -17,6 +17,7 @@ from .query import (
     STOPWORDS,
     SUBJECT_ALIASES,
     analyze,
+    content_tokens,
     tokenize,
 )
 from .ranking import rank, split_sentences
@@ -46,6 +47,8 @@ MAX_POINTS_PER_SLIDE = 6
 MAX_EXAMPLES_PER_OBJECTIVE = 2
 MAX_CONCEPT_SLIDES = 15
 MAX_CODE_LINES = 14
+MAX_HOMEWORK_PREREQS = 6     # extra prerequisite-coverage sections a homework can add
+HOMEWORK_OVERLAP_FLOOR = 0.6  # drop a retrieved example whose words mostly echo the homework
 TITLE_SHORT_LIMIT = 55
 
 _cache = TTLCache(ttl_seconds=3600)
@@ -170,6 +173,7 @@ class ObjectiveResult:
     questions: list = field(default_factory=list)         # review questions (conceptual lectures)
     citations: list = field(default_factory=list)
     confidence: str = "none"
+    prerequisite: bool = False                            # homework-driven coverage (kept off the agenda)
 
 
 def _code_lines(block):
@@ -461,13 +465,16 @@ def _code_examples(query, passages, ranked, limit):
 
 
 def extract_examples(
-    query, passages, ranked, programming_lecture=False, limit=MAX_EXAMPLES_PER_OBJECTIVE
+    query, passages, ranked, programming_lecture=False, limit=MAX_EXAMPLES_PER_OBJECTIVE,
+    homework_tokens=None,
 ):
     """Worked examples for an objective.
 
     Programming lecture: examples are driven per-concept elsewhere (see
     `_attach_concept_examples`), so this returns []. Otherwise: code (if any) +
-    'for example…' prose + a best-effort fallback sentence."""
+    'for example…' prose + a best-effort fallback sentence. When `homework_tokens`
+    are given, any example whose wording mostly echoes the homework is dropped so
+    the deck never restates an assignment question."""
     if programming_lecture:
         return []
 
@@ -498,7 +505,10 @@ def extract_examples(
                 "source": top.passage.source,
             }
         )
-    return examples[:limit]
+    examples = examples[:limit]
+    if homework_tokens:
+        examples = [e for e in examples if not _overlaps_homework(e.get("text", ""), homework_tokens)]
+    return examples
 
 
 def _to_points(answer):
@@ -588,7 +598,7 @@ def _curated_illustration(objective):
     return concept_library.illustration_for(topic) if topic else None
 
 
-def _build_objective(objective, context="", programming_lecture=False):
+def _build_objective(objective, context="", programming_lecture=False, homework_tokens=None):
     # Prefer curated, Gemini-quality layman content — no network, no jargon.
     curated = _curated_explanation(objective)
     if curated is not None:
@@ -616,15 +626,17 @@ def _build_objective(objective, context="", programming_lecture=False):
     return ObjectiveResult(
         objective=objective,
         points=points,
-        examples=extract_examples(query, passages, ranked, programming_lecture),
+        examples=extract_examples(
+            query, passages, ranked, programming_lecture, homework_tokens=homework_tokens
+        ),
         citations=synth["citations"],
         confidence=synth["confidence"],
     )
 
 
-def _safe_build(objective, context="", programming_lecture=False):
+def _safe_build(objective, context="", programming_lecture=False, homework_tokens=None):
     try:
-        return _build_objective(objective, context, programming_lecture)
+        return _build_objective(objective, context, programming_lecture, homework_tokens)
     except Exception:
         log.warning("objective failed: %s", objective, exc_info=True)
         return ObjectiveResult(objective)
@@ -828,10 +840,41 @@ def _add_case_study(deck, title, results, footer):
     add_bullet_slide(deck, case["title"], case["bullets"], notes="\n".join(notes), footer=footer)
 
 
+def _add_prereq_divider(deck, footer):
+    """A section header before homework-driven prerequisite coverage."""
+    add_bullet_slide(
+        deck,
+        "Prerequisite Skills for the Assignment",
+        [
+            "These aren't new objectives — they're the building blocks you'll need "
+            "to complete the assignment confidently.",
+        ],
+        notes=(
+            "These sections were added to cover what the assignment requires. The "
+            "assignment's own questions and answers are deliberately not shown."
+        ),
+        footer=footer,
+    )
+
+
+def _prereq_notes(result):
+    lines = [
+        "Prerequisite skill for the assignment — taught so students can complete "
+        "the homework on their own (the assignment itself is never shown)."
+    ]
+    if result.citations:
+        lines.append(
+            "Sources: " + "; ".join(f"{c['title']} ({c['source']})" for c in result.citations)
+        )
+    return "\n".join(lines)
+
+
 def build_module_deck(title, results, source_label=None):
     deck = new_deck()
     footer = title or "Module Lecture"
-    subtitle = f"{len(results)} learning objectives"
+    # Prerequisite (homework-driven) sections are taught but kept off the agenda.
+    agenda = [result for result in results if not result.prerequisite]
+    subtitle = f"{len(agenda)} learning objectives"
     if source_label:
         subtitle += f" · from {source_label}"
     add_title_slide(deck, title or "Module Lecture", subtitle)
@@ -840,7 +883,7 @@ def build_module_deck(title, results, source_label=None):
     add_list_slide(
         deck,
         "Module Overview",
-        [f"{i}. {clean_title(_topic_title(result.objective))}" for i, result in enumerate(results, 1)],
+        [f"{i}. {clean_title(_topic_title(result.objective))}" for i, result in enumerate(agenda, 1)],
         footer=footer,
     )
 
@@ -858,16 +901,26 @@ def build_module_deck(title, results, source_label=None):
             refs[key] = len(refs) + 1
             ref_order.append(item)
 
-    for index, result in enumerate(results, 1):
+    objective_index = 0
+    divider_added = False
+    for result in results:
+        if result.prerequisite and not divider_added:
+            _add_prereq_divider(deck, footer)
+            divider_added = True
         points = result.points or [
             "No reliable source was found for this objective — try rephrasing it "
             "or supplement from your own materials."
         ]
+        if result.prerequisite:
+            notes = _prereq_notes(result)
+        else:
+            objective_index += 1
+            notes = _explanation_notes(objective_index, result)
         add_bullet_slide(
             deck,
             _topic_title(result.objective),
             points,
-            notes=_explanation_notes(index, result),
+            notes=notes,
             footer=footer,
         )
         for citation in result.citations:
@@ -972,15 +1025,69 @@ def _attach_quant_units(results):
             result.quant_units.append({"concept": name, **unit})
 
 
-def build_lecture_deck(objectives_text, title="Module Lecture", source_label=None):
+# --- homework-driven prerequisite coverage ----------------------------------
+
+
+def _overlaps_homework(text, homework_tokens):
+    """True when a candidate example's wording mostly echoes the homework — used
+    to keep retrieved examples from accidentally restating an assignment item."""
+    tokens = set(content_tokens(text))
+    if not tokens or not homework_tokens:
+        return False
+    return len(tokens & homework_tokens) / len(tokens) >= HOMEWORK_OVERLAP_FLOOR
+
+
+def _covered_concepts(profile, objectives):
+    """The concepts/topics the objectives already teach, per profile."""
+    covered = set()
+    for objective in objectives:
+        if profile == "programming":
+            covered.update(extract_concepts(analyze(objective)))
+        elif profile == "quantitative":
+            name = quant_library.match(objective)
+            if name:
+                covered.add(name)
+        else:
+            topic = concept_library.match_topic(objective)
+            if topic:
+                covered.add(topic)
+    return covered
+
+
+def _homework_prereqs(profile, homework_text, covered):
+    """Concepts a homework exercises that the objectives don't already cover —
+    the prerequisite skills the deck should add (capped, agenda-excluded)."""
+    if profile == "programming":
+        names = extract_concepts(analyze(homework_text))
+    elif profile == "quantitative":
+        names = quant_library.find_all(homework_text)
+    else:
+        names = concept_library.find_topics(homework_text)
+    prereqs = []
+    for name in names:
+        if name not in covered and name not in prereqs:
+            prereqs.append(name)
+    return prereqs[:MAX_HOMEWORK_PREREQS]
+
+
+def build_lecture_deck(objectives_text, title="Module Lecture", source_label=None, homework_text=None):
     """The /api/v1/lecture entry point: returns (pptx_bytes, summary).
-    `source_label` (an uploaded file's name) is shown on the title slide."""
+    `source_label` (an uploaded file's name) is shown on the title slide.
+    `homework_text` (an optional assignment) adds prerequisite-skill coverage —
+    the concepts it requires are taught, but it is never restated, solved, or
+    shown anywhere in the deck."""
     objectives = parse_objectives(objectives_text)
     if not objectives:
         raise LectureError("No learning objectives found in the provided text.")
 
     title = (title or "Module Lecture").strip() or "Module Lecture"
-    cache_key = (title.lower(), tuple(o.lower() for o in objectives), source_label or "")
+    homework_text = (homework_text or "").strip() or None
+    cache_key = (
+        title.lower(),
+        tuple(o.lower() for o in objectives),
+        source_label or "",
+        homework_text or "",
+    )
     cached = _cache.get(cache_key)
     if cached is not None:
         return cached
@@ -989,15 +1096,30 @@ def build_lecture_deck(objectives_text, title="Module Lecture", source_label=Non
     # units; everything else (conceptual) gets illustrations + review questions.
     profile = classify_subject(objectives, title)
     programming_lecture = profile == "programming"
+    homework_tokens = set(content_tokens(homework_text)) if homework_text else None
+
+    # Homework adds prerequisite coverage: concepts the assignment needs that the
+    # objectives don't already teach. These become extra sections (off the
+    # agenda); the homework text itself is never rendered. If it yields no usable
+    # concepts, the deck is exactly as it would be without homework.
+    prereq_concepts = (
+        _homework_prereqs(profile, homework_text, _covered_concepts(profile, objectives))
+        if homework_text
+        else []
+    )
+    prereq_objectives = [f"Understand {name}" for name in prereq_concepts]
 
     context = context_terms(title) if title != "Module Lecture" else ""
-    with ThreadPoolExecutor(max_workers=min(len(objectives), 6)) as executor:
-        results = list(
-            executor.map(lambda o: _safe_build(o, context, programming_lecture), objectives)
-        )
+    with ThreadPoolExecutor(max_workers=min(len(objectives) + len(prereq_objectives), 8)) as executor:
+        builder = lambda o: _safe_build(o, context, programming_lecture, homework_tokens)
+        results = list(executor.map(builder, objectives))
+        prereq_results = list(executor.map(builder, prereq_objectives))
+    for result in prereq_results:
+        result.prerequisite = True
+    results = results + prereq_results
 
     if profile == "programming":
-        _attach_concept_examples(results, objectives, title)
+        _attach_concept_examples(results, objectives + prereq_objectives, title)
     elif profile == "quantitative":
         _attach_quant_units(results)
         # Objectives that matched no worked-problem concept fall back to the
@@ -1010,11 +1132,13 @@ def build_lecture_deck(objectives_text, title="Module Lecture", source_label=Non
     summary = {
         "title": title,
         "objectives": len(objectives),
+        "prerequisites": len(prereq_results),
         "items": [
             {
                 "objective": r.objective,
                 "confidence": r.confidence,
-                "examples": len(r.examples) + len(r.concept_examples),
+                "examples": len(r.examples) + len(r.concept_examples) + len(r.quant_units),
+                "prerequisite": r.prerequisite,
             }
             for r in results
         ],

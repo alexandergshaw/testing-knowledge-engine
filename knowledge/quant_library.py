@@ -264,6 +264,17 @@ def match(objective):
     return None
 
 
+def find_all(text):
+    """Every quantitative concept named anywhere in a block of text (e.g. mined
+    from a homework assignment), de-duplicated in match order."""
+    lowered = text.lower()
+    found = []
+    for name, phrases in _MATCHERS.items():
+        if name not in found and any(phrase in lowered for phrase in phrases):
+            found.append(name)
+    return found
+
+
 def unit_for(name):
     """The full worked-problem unit for a concept, or None:
     {worked_example:{problem, steps}, practice:{problem}, answer:{steps}}."""

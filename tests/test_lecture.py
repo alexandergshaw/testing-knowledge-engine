@@ -458,7 +458,7 @@ def test_lecture_route_serves_pptx(client, monkeypatch):
     monkeypatch.setattr(
         service_module,
         "build_lecture_deck",
-        lambda objectives, title, source_label=None: (
+        lambda objectives, title, **kwargs: (
             b"PK\x03\x04fakepptx", {"objectives": 2, "title": title, "items": []}
         ),
     )
@@ -475,7 +475,7 @@ def test_lecture_route_accepts_list(client, monkeypatch):
     captured = {}
     monkeypatch.delenv("API_KEY", raising=False)
 
-    def fake(objectives, title, source_label=None):
+    def fake(objectives, title, **kwargs):
         captured["objectives"] = objectives
         return (b"x", {"objectives": 2, "title": title, "items": []})
 
@@ -645,8 +645,10 @@ def test_quant_unmatched_objective_falls_back_to_conceptual(monkeypatch):
 def _capture_lecture(monkeypatch):
     captured = {}
 
-    def fake(objectives, title, source_label=None):
-        captured.update(objectives=objectives, title=title, source_label=source_label)
+    def fake(objectives, title, source_label=None, homework_text=None):
+        captured.update(
+            objectives=objectives, title=title, source_label=source_label, homework_text=homework_text
+        )
         return (b"PK\x03\x04fake", {"objectives": 1, "title": title, "items": []})
 
     monkeypatch.setattr(service_module, "build_lecture_deck", fake)
@@ -757,3 +759,86 @@ def test_openapi_lecture_documents_multipart(client):
     spec = client.get("/api/v1/openapi.json").get_json()
     content = spec["paths"]["/api/v1/lecture"]["post"]["requestBody"]["content"]
     assert "multipart/form-data" in content and "application/json" in content
+
+
+# --- homework-aware generation ----------------------------------------------
+
+
+def test_overlaps_homework_guard():
+    from knowledge.lecture import _overlaps_homework
+    from knowledge.query import content_tokens
+
+    hw = set(content_tokens("explain photosynthesis in plants using sunlight and water"))
+    assert _overlaps_homework("Photosynthesis in plants uses sunlight and water.", hw)
+    assert not _overlaps_homework("The French Revolution began in 1789.", hw)
+
+
+def test_homework_adds_offagenda_prerequisite_coverage():
+    from knowledge.lecture import build_lecture_deck
+
+    pptx_bytes, summary = build_lecture_deck(
+        "Define variables.",
+        title="Intro to Python",
+        homework_text="Students will write functions and use loops to process lists.",
+    )
+    deck = Presentation(io.BytesIO(pptx_bytes))
+    titles = [slide_title(s) for s in deck.slides]
+    assert "Prerequisite Skills for the Assignment" in titles
+    assert any(t.startswith("Example: Functions") for t in titles)   # prereq concept taught
+    assert summary["prerequisites"] >= 2
+    # The agenda lists only the real objective, not the homework's concepts.
+    overview = next(s for s in deck.slides if slide_title(s) == "Module Overview")
+    overview_text = "\n".join(sh.text_frame.text for sh in overview.shapes if sh.has_text_frame)
+    assert "Variables" in overview_text
+    assert "Functions" not in overview_text
+
+
+def test_homework_with_no_recognized_concepts_is_noop():
+    from knowledge.lecture import build_lecture_deck
+
+    pptx_bytes, summary = build_lecture_deck(
+        "Define variables.",
+        title="Intro to Python",
+        homework_text="Please write a thoughtful reflective essay about your feelings.",
+    )
+    titles = [slide_title(s) for s in Presentation(io.BytesIO(pptx_bytes)).slides]
+    assert "Prerequisite Skills for the Assignment" not in titles
+    assert summary["prerequisites"] == 0
+
+
+def test_lecture_homework_field_json(client, monkeypatch):
+    monkeypatch.delenv("API_KEY", raising=False)
+    captured = _capture_lecture(monkeypatch)
+    client.post(
+        "/api/v1/lecture",
+        json={"objectives": "define variables and explain loops", "homework": "write functions"},
+    )
+    assert captured["homework_text"] == "write functions"
+
+
+def test_lecture_homeworkfile_multipart(client, monkeypatch):
+    monkeypatch.delenv("API_KEY", raising=False)
+    captured = _capture_lecture(monkeypatch)
+    client.post(
+        "/api/v1/lecture",
+        data={
+            "objectives": "define variables and explain loops",
+            "homeworkFile": (io.BytesIO(b"Write three functions and a loop."), "hw.txt"),
+        },
+        content_type="multipart/form-data",
+    )
+    assert "functions" in (captured["homework_text"] or "")
+
+
+def test_lecture_homeworkfile_unsupported_type(client, monkeypatch):
+    monkeypatch.delenv("API_KEY", raising=False)
+    res = client.post(
+        "/api/v1/lecture",
+        data={
+            "objectives": "define variables and explain loops",
+            "homeworkFile": (io.BytesIO(b"\x00"), "hw.exe"),
+        },
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 415
+    assert res.get_json()["error"]["code"] == "unsupported_media_type"

@@ -26,3 +26,9 @@ def test_every_unit_is_well_formed_and_distinct():
 
 def test_unit_for_missing_returns_none():
     assert quant_library.unit_for("Nonexistent Concept") is None
+
+
+def test_find_all_mines_multiple_concepts():
+    found = quant_library.find_all("Homework: solve quadratic equations and use Ohm's law.")
+    assert "Quadratic Equations" in found and "Ohm's Law" in found
+    assert quant_library.find_all("Write an essay about history") == []
