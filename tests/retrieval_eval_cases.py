@@ -12,9 +12,9 @@ gate is expected to flip it.
 """
 
 CASES = [
-    # The motivating failure: "accumulator" only appears in off-topic articles.
-    {"objective": "Use the accumulator pattern to process data",
-     "keywords": ["accumulator"], "xfail": True},
+    # The motivating failure: "accumulator" only appears in off-topic articles
+    # (Hough transform); the D-b relevance gate turns this into an honest gap.
+    {"objective": "Use the accumulator pattern to process data", "keywords": ["accumulator"]},
     # Clear, well-matched topics — retrieval should already nail these.
     {"objective": "Explain photosynthesis", "keywords": ["photosynthesis"]},
     {"objective": "Describe natural selection", "keywords": ["natural selection", "evolution"]},

@@ -39,6 +39,38 @@ def test_synthesis_has_answer_citations_and_markers():
     assert result["citations"][0]["url"]
 
 
+def test_relevance_gate_drops_off_topic_titles():
+    # The body mentions the keyword but the article is a different subject — an
+    # honest gap is better than confidently citing the wrong article.
+    _, result = build(
+        "Use the accumulator pattern to process data",
+        [
+            make_passage(
+                "The Hough transform obtains object candidates as local maxima in a "
+                "so-called accumulator space constructed by the algorithm.",
+                title="Hough transform",
+            )
+        ],
+    )
+    assert result["confidence"] == "none"
+    assert result["citations"] == []
+
+
+def test_relevance_gate_keeps_on_topic_title():
+    _, result = build(
+        "Explain photosynthesis",
+        [
+            make_passage(
+                "Photosynthesis is the process plants use to make food from sunlight, "
+                "water, and carbon dioxide.",
+                title="Photosynthesis",
+            )
+        ],
+    )
+    assert result["confidence"] != "none"
+    assert result["citations"]
+
+
 def test_near_duplicates_are_removed():
     _, result = build(
         "What is photosynthesis?",
@@ -46,12 +78,12 @@ def test_near_duplicates_are_removed():
             make_passage(
                 "Photosynthesis is the process plants use to convert sunlight into "
                 "chemical energy stored in glucose molecules.",
-                title="A",
+                title="Photosynthesis",
             ),
             make_passage(
                 "Photosynthesis is the process that plants use to convert sunlight "
                 "into chemical energy stored in glucose molecules.",
-                title="B",
+                title="Photosynthesis in plants",
                 url="http://example.com/b",
             ),
         ],

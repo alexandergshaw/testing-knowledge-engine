@@ -127,6 +127,18 @@ def synthesize(query, ranked_sentences):
     if not selected or confidence == "none":
         return {"answer": FALLBACK_ANSWER, "citations": [], "confidence": "none"}
 
+    # Relevance gate (conservative): if none of the sentences we'd cite come from
+    # an article whose *title* is topically on point, this is off-target
+    # retrieval (e.g. "accumulator pattern" -> "Hough transform", whose body
+    # mentions "accumulator space" but is a different subject). Report an honest
+    # gap rather than confident noise. Any shared substantive title token keeps
+    # it — so a well-matched article is never dropped for differing phrasing.
+    topic_tokens = set(content_tokens(query.topic))
+    if topic_tokens and not any(
+        topic_tokens & set(content_tokens(sentence.passage.title)) for sentence in selected
+    ):
+        return {"answer": FALLBACK_ANSWER, "citations": [], "confidence": "none"}
+
     ordered = _order(selected, query)
 
     # Number citations by first appearance.
