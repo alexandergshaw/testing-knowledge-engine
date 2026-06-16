@@ -48,7 +48,8 @@ MAX_EXAMPLES_PER_OBJECTIVE = 2
 MAX_CONCEPT_SLIDES = 15
 MAX_CODE_LINES = 14
 MAX_HOMEWORK_PREREQS = 6     # extra prerequisite-coverage sections a homework can add
-HOMEWORK_OVERLAP_FLOOR = 0.6  # drop a retrieved example whose words mostly echo the homework
+HOMEWORK_OVERLAP_FLOOR = 0.85  # drop only a retrieved example that nearly duplicates the homework
+                               # (concept-level overlap is expected and fine)
 TITLE_SHORT_LIMIT = 55
 
 _cache = TTLCache(ttl_seconds=3600)
@@ -110,6 +111,15 @@ def _split_on_verbs(text):
     return objectives
 
 
+# Lines that are code or raw fragments, not learning objectives — kept out of
+# decks (conservative: real objectives never contain these patterns).
+_NOISE_OBJECTIVE = re.compile(r"==|!=|->|::|[{}\[\]]|[a-zA-Z_]\w*\s*=\s*\S|^\s*\(")
+
+
+def _is_noise_objective(text):
+    return len(text) > 160 or bool(_NOISE_OBJECTIVE.search(text))
+
+
 def _finalize(items, limit):
     seen, out = set(), []
     for item in items:
@@ -118,9 +128,10 @@ def _finalize(items, limit):
         )
         objective = re.sub(r"\s+", " ", objective).strip()
         key = objective.lower()
-        if objective and key not in seen:
-            seen.add(key)
-            out.append(objective)
+        if not objective or key in seen or _is_noise_objective(objective):
+            continue
+        seen.add(key)
+        out.append(objective)
         if len(out) >= limit:
             break
     return out
@@ -1070,12 +1081,15 @@ def _homework_prereqs(profile, homework_text, covered):
     return prereqs[:MAX_HOMEWORK_PREREQS]
 
 
-def build_lecture_deck(objectives_text, title="Module Lecture", source_label=None, homework_text=None):
+def build_lecture_deck(
+    objectives_text, title="Module Lecture", source_label=None, homework_text=None, context_extra=None
+):
     """The /api/v1/lecture entry point: returns (pptx_bytes, summary).
     `source_label` (an uploaded file's name) is shown on the title slide.
     `homework_text` (an optional assignment) adds prerequisite-skill coverage —
     the concepts it requires are taught, but it is never restated, solved, or
-    shown anywhere in the deck."""
+    shown anywhere in the deck. `context_extra` (e.g. an uploaded file's outline)
+    only biases retrieval toward the module's framing; it generates no slides."""
     objectives = parse_objectives(objectives_text)
     if not objectives:
         raise LectureError("No learning objectives found in the provided text.")
@@ -1087,6 +1101,7 @@ def build_lecture_deck(objectives_text, title="Module Lecture", source_label=Non
         tuple(o.lower() for o in objectives),
         source_label or "",
         homework_text or "",
+        (context_extra or "")[:200],
     )
     cached = _cache.get(cache_key)
     if cached is not None:
@@ -1109,7 +1124,14 @@ def build_lecture_deck(objectives_text, title="Module Lecture", source_label=Non
     )
     prereq_objectives = [f"Understand {name}" for name in prereq_concepts]
 
+    # An uploaded file (or other supplemental material) biases retrieval toward
+    # the module's framing — bounded to a handful of salient terms so it nudges
+    # rather than derails the keyword search.
     context = context_terms(title) if title != "Module Lecture" else ""
+    if context_extra:
+        extra_terms = list(dict.fromkeys(content_tokens(context_extra)))[:12]
+        context = (context + " " + " ".join(extra_terms)).strip()
+
     with ThreadPoolExecutor(max_workers=min(len(objectives) + len(prereq_objectives), 8)) as executor:
         builder = lambda o: _safe_build(o, context, programming_lecture, homework_tokens)
         results = list(executor.map(builder, objectives))

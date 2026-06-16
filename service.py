@@ -645,39 +645,59 @@ def _homework_from_multipart():
 
 
 def _lecture_inputs_from_upload():
-    """Parse multipart inputs for /lecture (a source file and/or objectives, plus
-    optional homework). Returns (objectives, title, source_label, homework_text,
-    error) — error is None on success or an error_response tuple. The extracted
-    source-file text is merged with any objectives field (file text first) and
-    capped, so an uploaded deck is just a richer way to supply objectives."""
+    """Parse multipart inputs for /lecture. Returns (objectives, title,
+    source_label, homework_text, file_context, error) — error is None on success
+    or an error_response tuple.
+
+    Role of an uploaded `file`: when typed `objectives` are present, they drive
+    the deck and the file only *grounds/biases* retrieval (returned as
+    file_context — it generates no slides). When no objectives are typed, the
+    deck's objectives are derived from the file's outline (headings)."""
     objectives_field = (request.form.get("objectives") or "").strip()
     title = (request.form.get("title") or "Module Lecture").strip()
 
     homework_text, hw_error = _homework_from_multipart()
     if hw_error:
-        return None, None, None, None, hw_error
+        return None, None, None, None, None, hw_error
 
     upload = request.files.get("file")
     if upload is None or not upload.filename:
         if not objectives_field:
-            return None, None, None, None, error_response(
+            return None, None, None, None, None, error_response(
                 "invalid_request", "Provide learning objectives or upload a file.", 400
             )
-        return objectives_field, title, None, homework_text, None
+        return objectives_field, title, None, homework_text, None, None
 
-    extracted, error = _extract_upload("file", "source")
-    if error:
-        return None, None, None, None, error
-    if not extracted and not objectives_field:
-        return None, None, None, None, error_response(
+    if not extract.is_supported(upload.filename):
+        return None, None, None, None, None, error_response(
+            "unsupported_media_type",
+            "Unsupported file type. Use .pptx, .docx, .pdf, .xlsx, or plain text.",
+            415,
+        )
+    data = upload.read()
+    if len(data) > MAX_UPLOAD_BYTES:
+        return None, None, None, None, None, error_response(
+            "payload_too_large", f"File too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB).", 413
+        )
+
+    if objectives_field:
+        # Objectives are authoritative; the file only grounds retrieval.
+        return objectives_field, title, upload.filename, homework_text, extract.extract_outline(
+            upload.filename, data
+        ), None
+
+    # No objectives typed: derive them from the file's outline (headings first).
+    derived = extract.extract_outline(upload.filename, data) or extract.extract_text(
+        upload.filename, data
+    )
+    if not derived:
+        return None, None, None, None, None, error_response(
             "invalid_request",
             "Could not extract any text from the file (it may be empty or scanned). "
             "Add objectives or upload a file with selectable text.",
             422,
         )
-
-    merged = f"{extracted}\n\n{objectives_field}".strip() if objectives_field else extracted
-    return merged[:MAX_OBJECTIVES_LENGTH], title, upload.filename, homework_text, None
+    return derived[:MAX_OBJECTIVES_LENGTH], title, upload.filename, homework_text, None, None
 
 
 @api.route("/api/v1/lecture", methods=["POST"])
@@ -686,7 +706,7 @@ def make_lecture():
     # Two accepted shapes: multipart/form-data (file and/or objectives) or the
     # original JSON body. JSON behavior is unchanged.
     if (request.content_type or "").startswith("multipart/form-data"):
-        objectives, title, source_label, homework_text, error = _lecture_inputs_from_upload()
+        objectives, title, source_label, homework_text, file_context, error = _lecture_inputs_from_upload()
         if error:
             return error
     else:
@@ -698,6 +718,7 @@ def make_lecture():
         title = (data.get("title") or "Module Lecture").strip()
         source_label = None
         homework_text = ((data.get("homework") or "").strip()[:MAX_OBJECTIVES_LENGTH]) or None
+        file_context = None
 
     if len(objectives) < MIN_OBJECTIVES_LENGTH:
         return error_response("invalid_request", "Provide the module's learning objectives.", 400)
@@ -710,7 +731,11 @@ def make_lecture():
 
     try:
         payload, summary = build_lecture_deck(
-            objectives, title, source_label=source_label, homework_text=homework_text
+            objectives,
+            title,
+            source_label=source_label,
+            homework_text=homework_text,
+            context_extra=file_context,
         )
     except LectureError as error:
         return error_response("invalid_request", str(error), 422)

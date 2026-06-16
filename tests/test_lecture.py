@@ -68,6 +68,14 @@ def test_parse_caps_and_dedupes():
     assert objectives == ["define x", "explain y"]
 
 
+def test_parse_objectives_drops_code_and_fragments():
+    # Raw chapter/code lines must never become objectives (the 60-slide bug).
+    objectives = parse_objectives(
+        "Define variables\na == b and c > d\nExplain loops\nx = 5\n(dayWeek == Tuesday) or"
+    )
+    assert objectives == ["Define variables", "Explain loops"]
+
+
 # --- extract_examples --------------------------------------------------------
 
 
@@ -645,10 +653,8 @@ def test_quant_unmatched_objective_falls_back_to_conceptual(monkeypatch):
 def _capture_lecture(monkeypatch):
     captured = {}
 
-    def fake(objectives, title, source_label=None, homework_text=None):
-        captured.update(
-            objectives=objectives, title=title, source_label=source_label, homework_text=homework_text
-        )
+    def fake(objectives, title, **kwargs):
+        captured.update(objectives=objectives, title=title, **kwargs)
         return (b"PK\x03\x04fake", {"objectives": 1, "title": title, "items": []})
 
     monkeypatch.setattr(service_module, "build_lecture_deck", fake)
@@ -669,20 +675,24 @@ def test_lecture_accepts_text_file_upload(client, monkeypatch):
     assert captured["source_label"] == "notes.txt"
 
 
-def test_lecture_upload_merges_file_then_objectives(client, monkeypatch):
+def test_lecture_upload_file_is_context_not_objectives(client, monkeypatch):
+    # When objectives are typed, they drive the deck; the file only biases
+    # retrieval (passed as context_extra) and never becomes objectives.
     monkeypatch.delenv("API_KEY", raising=False)
     captured = _capture_lecture(monkeypatch)
     client.post(
         "/api/v1/lecture",
         data={
-            "file": (io.BytesIO(b"From the file"), "notes.txt"),
+            "file": (io.BytesIO(b"Chapter notes on recursion"), "notes.txt"),
             "objectives": "Typed objective about recursion",
             "title": "My Module",
         },
         content_type="multipart/form-data",
     )
-    objectives = captured["objectives"]
-    assert objectives.index("From the file") < objectives.index("Typed objective")
+    assert captured["objectives"] == "Typed objective about recursion"
+    assert "Chapter notes" not in captured["objectives"]
+    assert captured["context_extra"]                 # file outline used as bias
+    assert captured["source_label"] == "notes.txt"   # file still recorded
     assert captured["title"] == "My Module"
 
 
@@ -769,7 +779,10 @@ def test_overlaps_homework_guard():
     from knowledge.query import content_tokens
 
     hw = set(content_tokens("explain photosynthesis in plants using sunlight and water"))
-    assert _overlaps_homework("Photosynthesis in plants uses sunlight and water.", hw)
+    # Near-verbatim echo of the homework -> flagged.
+    assert _overlaps_homework("Explain photosynthesis in plants using sunlight and water.", hw)
+    # Same concept, different wording -> NOT flagged (concept overlap is expected).
+    assert not _overlaps_homework("Photosynthesis lets a plant grow.", hw)
     assert not _overlaps_homework("The French Revolution began in 1789.", hw)
 
 

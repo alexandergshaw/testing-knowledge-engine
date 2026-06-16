@@ -141,3 +141,79 @@ def extract_text(filename, data):
     except Exception:
         log.warning("text extraction failed for %s", filename, exc_info=True)
         return ""
+
+
+# --- outline (headings/titles only) -----------------------------------------
+# For seeding a lecture from a deck/doc, the slide titles and headings are the
+# topic signal; body prose and code are noise. extract_outline returns just that.
+
+
+def _looks_like_heading(line):
+    line = line.strip()
+    if not 2 <= len(line) <= 90:
+        return False
+    if line.endswith((".", "!", "?", ":", ";", ",")):  # a sentence/clause, not a heading
+        return False
+    if re.search(r"==|!=|->|::|[(){}\[\]<>]|[a-zA-Z_]\w*\s*=\s*\S", line):  # code-ish
+        return False
+    if sum(ch.isdigit() for ch in line) > len(line) * 0.4:  # mostly numbers
+        return False
+    return True
+
+
+def _outline_pptx(data):
+    from pptx import Presentation
+
+    deck = Presentation(io.BytesIO(data))
+    titles = []
+    for slide in deck.slides:
+        title = ""
+        if slide.shapes.title is not None and slide.shapes.title.text.strip():
+            title = slide.shapes.title.text.strip()
+        else:
+            for shape in slide.shapes:
+                if shape.has_text_frame and shape.text_frame.text.strip():
+                    title = shape.text_frame.paragraphs[0].text.strip()
+                    break
+        if title:
+            titles.append(title.splitlines()[0].strip())
+    return titles
+
+
+def _outline_docx(data):
+    from docx import Document
+
+    document = Document(io.BytesIO(data))
+    out = []
+    for paragraph in document.paragraphs:
+        text = paragraph.text.strip()
+        if not text:
+            continue
+        style = (paragraph.style.name or "").lower() if paragraph.style else ""
+        if style.startswith("heading") or style == "title" or _looks_like_heading(text):
+            out.append(text)
+    return out
+
+
+def extract_outline(filename, data):
+    """Headings/slide-titles from a file, one per line, deduped — the clean topic
+    signal. Falls back to heading-shaped lines from the full text for formats
+    without explicit headings. Returns "" on failure."""
+    ext = _ext(filename)
+    try:
+        if ext == ".pptx":
+            lines = _outline_pptx(data)
+        elif ext == ".docx":
+            lines = _outline_docx(data)
+        else:
+            lines = [ln for ln in extract_text(filename, data).split("\n") if _looks_like_heading(ln)]
+    except Exception:
+        log.warning("outline extraction failed for %s", filename, exc_info=True)
+        lines = []
+    seen, out = set(), []
+    for line in lines:
+        line = line.strip()
+        if line and line not in seen:
+            seen.add(line)
+            out.append(line)
+    return "\n".join(out)

@@ -38,20 +38,25 @@ Content-Type: application/json
 
 Rules (enforced server-side):
 - At least one of `file` / `objectives` must be present.
-- If both: extracted file text first, then `objectives`.
-- If only `file`: objectives are derived entirely from the extracted text.
-- Merged text is capped to ~4000 chars / ~20 objectives — long decks are
-  summarized down to their headings/objectives, not used verbatim.
+- **If `objectives` are provided, they drive the deck** — the file is used only
+  to *ground/bias retrieval* (its headings become context terms) and generates
+  no slides of its own. This keeps an uploaded textbook chapter from flooding the
+  deck with its slides.
+- **If only `file` is provided**, the deck's objectives are derived from the
+  file's **outline (headings/slide titles)** — not its full body text — sanitized
+  (code/fragment lines dropped) and capped (~8 objectives).
 - One file per request.
 
 ## How it works (set expectations accordingly)
 The endpoint is **deterministic / no-LLM**. The uploaded file is **not** free-form
-LLM context — its text is extracted server-side
-([knowledge/extract.py](../knowledge/extract.py)) and fed into the same
-objective-parsing + source-retrieval pipeline as the `objectives` string. A deck
-is just a richer way to supply `objectives`; slide titles/bullets become topic
-signal, and the resulting deck is rebuilt from the engine's trusted sources, not
-copied from the upload.
+LLM context. Its role depends on whether you also send `objectives`:
+- With typed `objectives`: the file is **supplemental grounding** — its headings
+  bias retrieval toward the module's framing, nothing more.
+- Without `objectives`: the file's **outline** is parsed into objectives.
+
+Either way the deck is rebuilt from the engine's trusted sources (slide titles /
+headings are the topic signal), never copied from the upload. Body prose and code
+in the file are intentionally ignored.
 
 ## Homework (prerequisite-aware coverage)
 Supply a homework assignment (`homework` text and/or a `homeworkFile`) and the

@@ -78,3 +78,18 @@ def test_unsupported_extension_returns_empty():
 
 def test_normalize_collapses_blank_lines():
     assert extract.extract_text("a.txt", b"A\n\n\n\nB\n  \n  C  ") == "A\n\nB\n\n  C"
+
+
+def test_extract_outline_pptx_returns_titles():
+    data = make_pptx(["Introduction", "Boolean Expressions", "While Loop"])
+    assert extract.extract_outline("ch.pptx", data).split("\n") == [
+        "Introduction", "Boolean Expressions", "While Loop"
+    ]
+
+
+def test_extract_outline_generic_drops_prose_and_code():
+    text = b"Boolean Expressions\nThis sentence explains things in great detail.\na == b and c\nWhile Loop"
+    outline = extract.extract_outline("ch.txt", text).split("\n")
+    assert "Boolean Expressions" in outline and "While Loop" in outline
+    assert not any("==" in line for line in outline)          # code dropped
+    assert not any(line.endswith(".") for line in outline)    # prose sentence dropped
