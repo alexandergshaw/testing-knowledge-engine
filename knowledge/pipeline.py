@@ -93,11 +93,35 @@ def fetch(query, sources):
     return passages
 
 
-def _attempt(query, domain=None):
+def _retrieve_once(query, domain=None):
+    """One retrieval pass. Returns (result, passages, ranked) so callers that
+    need the passages (e.g. the lecture example slides) keep them."""
     passages = fetch(query, select_sources(query, domain))
     if not passages:
-        return {"answer": FALLBACK_ANSWER, "citations": [], "confidence": "none"}
-    return synthesize(query, rank(query, passages))
+        return {"answer": FALLBACK_ANSWER, "citations": [], "confidence": "none"}, [], []
+    ranked = rank(query, passages)
+    return synthesize(query, ranked), passages, ranked
+
+
+def retrieve(query, domain=None, aliases=()):
+    """Multi-variant retrieval: the direct query, then each alias *only if* the
+    direct query gapped — so aliases rescue an off-target/empty result but never
+    override a good direct hit. Returns (result, passages, ranked)."""
+    result, passages, ranked = _retrieve_once(query, domain)
+    if result["confidence"] != "none" or not aliases:
+        return result, passages, ranked
+    base_terms = query.search_terms
+    for alias in aliases:
+        query.search_terms = alias
+        alt_result, alt_passages, alt_ranked = _retrieve_once(query, domain)
+        if alt_result["confidence"] != "none":
+            return alt_result, alt_passages, alt_ranked
+    query.search_terms = base_terms
+    return result, passages, ranked
+
+
+def _attempt(query, domain=None):
+    return _retrieve_once(query, domain)[0]
 
 
 def answer(question):

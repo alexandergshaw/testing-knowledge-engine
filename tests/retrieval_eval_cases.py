@@ -37,11 +37,10 @@ CASES = [
 # content-relevance (R-a), Rosetta Code/Wikibooks (R-b), aliases (R-c) — flips
 # them to pass. This is the gap-closure score the research loop drives up.
 GAP_CORPUS = [
-    # Still open — no Q&A/encyclopedic source has on-topic content for the bare
-    # idiom name; R-b (Rosetta Code) / R-c (aliases -> "running total") target it.
+    # Closed by R-c: the alias map routes "accumulator pattern" to Rosetta's
+    # "Accumulator factory" / Stack Overflow's "running total" content.
     {"objective": "Use the accumulator pattern to process data", "domain": "programming",
-     "keywords": ["accumulator", "sum", "total", "reduce", "fold"],
-     "require_relevant": True, "xfail": True},
+     "keywords": ["accumulator", "sum", "total", "reduce", "fold"], "require_relevant": True},
     # Closed by R-a (Q&A content-relevance) — now strict regression guards.
     {"objective": "Keep a running total in a loop", "domain": "programming",
      "keywords": ["running total", "accumulator", "sum", "loop"], "require_relevant": True},

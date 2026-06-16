@@ -78,6 +78,13 @@ def test_select_sources_domain_routing():
     assert pipeline._wikiversity in quant and pipeline._wikibooks in quant
 
 
+def test_aliases_for_concepts():
+    from knowledge.aliases import aliases_for
+
+    assert "accumulator factory" in aliases_for("Use the accumulator pattern to process data")
+    assert aliases_for("Explain photosynthesis") == []
+
+
 def test_programming_routing_includes_rosetta_and_wikibooks():
     routed = pipeline.select_sources(analyze("Write a function"), domain="programming")
     assert pipeline._rosettacode in routed

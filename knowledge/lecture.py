@@ -9,8 +9,9 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
+from .aliases import aliases_for
 from .cache import TTLCache
-from .pipeline import fetch, select_sources
+from .pipeline import fetch, retrieve, select_sources
 from .query import (
     _CODE_PATTERN,
     _PROGRAMMING_TERMS,
@@ -659,11 +660,11 @@ def _build_objective(objective, context="", homework_tokens=None, domain=None):
         query.search_terms = f"{query.search_terms} programming".strip()
     if context:
         query.search_terms = f"{query.search_terms} {context}".strip()
-    passages = fetch(query, select_sources(query, domain))
+    # Multi-variant retrieval: if the direct query gaps, retry with curated search
+    # aliases (e.g. "accumulator pattern" -> "accumulator factory"/"running total").
+    synth, passages, ranked = retrieve(query, domain, aliases_for(objective))
     if not passages:
         return ObjectiveResult(objective, provenance="gap")
-    ranked = rank(query, passages)
-    synth = synthesize(query, ranked)
     points = [p for p in (sanitize_layman(point) for point in _to_points(synth["answer"])) if p]
     return ObjectiveResult(
         objective=objective,

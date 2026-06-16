@@ -117,9 +117,15 @@ rendered). See [docs/lecture-upload.md](docs/lecture-upload.md).
   than citing an off-topic article whose body merely mentions a keyword
   ("accumulator pattern" ✗→ "Hough transform"); and **profile-aware source
   routing** (`select_sources(query, domain=…)`) sends a programming deck's every
-  objective to Stack Overflow / CS-Educators and a quantitative deck's to
-  Wikiversity / Wikibooks, even when an individual objective's wording didn't
-  trip the per-query flags.
+  objective to Stack Overflow / CS-Educators / **Rosetta Code** / Wikibooks and a
+  quantitative deck's to Wikiversity / Wikibooks, even when an individual
+  objective's wording didn't trip the per-query flags. Q&A/task sources are
+  judged by content, not title (a question "How do I sum a list?" *is* the
+  accumulator pattern). A small **alias map**
+  ([knowledge/aliases.py](knowledge/aliases.py)) drives multi-variant retrieval
+  ("accumulator pattern" → "accumulator factory"/"running total") tried only when
+  the direct query gaps. The benchmark's programming-idiom **gap corpus** is now
+  fully closed — and is the regression net for future source/alias work.
 - A deck's structure follows its **profile** (`classify_subject`): `programming`
   (per-concept code units), `quantitative` (math/physics/chemistry/statistics —
   worked-problem units), or `conceptual` (everything else — sciences, social

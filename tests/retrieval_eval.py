@@ -7,18 +7,21 @@ routing -> fetch -> rank -> synthesize.
 """
 
 import knowledge.pipeline as pipeline
+from knowledge.aliases import aliases_for
 from knowledge.query import analyze
 from knowledge.synthesize import CONTENT_RELEVANCE_SOURCES
 
 
 def run_case(case):
     """Return the synthesize result ({answer, citations, confidence}) for an eval
-    case, retrieving with its domain routing (if any)."""
+    case, retrieving with its domain routing and alias variants (the same path
+    the lecture flow uses)."""
     query = analyze(case["objective"])
     domain = case.get("domain")
     if domain == "programming" and "programming" not in query.search_terms:
         query.search_terms = f"{query.search_terms} programming".strip()
-    return pipeline._attempt(query, domain)
+    result, _, _ = pipeline.retrieve(query, domain, aliases_for(case["objective"]))
+    return result
 
 
 def acceptable(case, result):
