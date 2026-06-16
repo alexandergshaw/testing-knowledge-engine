@@ -111,6 +111,15 @@ rendered). See [docs/lecture-upload.md](docs/lecture-upload.md).
   alongside regular Wikipedia — its Basic-English prose (short sentences,
   common words) competes sentence-for-sentence in ranking, so the plainest
   phrasing tends to win when a topic has both.
+- **Retrieval quality** (measured by an offline benchmark,
+  [tests/test_retrieval_quality.py](tests/test_retrieval_quality.py)): a
+  conservative **relevance gate** in `synthesize` returns an honest *gap* rather
+  than citing an off-topic article whose body merely mentions a keyword
+  ("accumulator pattern" ✗→ "Hough transform"); and **profile-aware source
+  routing** (`select_sources(query, domain=…)`) sends a programming deck's every
+  objective to Stack Overflow / CS-Educators and a quantitative deck's to
+  Wikiversity / Wikibooks, even when an individual objective's wording didn't
+  trip the per-query flags.
 - A deck's structure follows its **profile** (`classify_subject`): `programming`
   (per-concept code units), `quantitative` (math/physics/chemistry/statistics —
   worked-problem units), or `conceptual` (everything else — sciences, social

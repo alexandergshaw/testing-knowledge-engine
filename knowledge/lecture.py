@@ -634,7 +634,7 @@ def _curated_illustration(objective):
     return concept_library.illustration_for(topic) if topic else None
 
 
-def _build_objective(objective, context="", homework_tokens=None):
+def _build_objective(objective, context="", homework_tokens=None, domain=None):
     # Prefer curated, Gemini-quality layman content — no network, no jargon.
     curated = _curated_explanation(objective)
     if curated is not None:
@@ -653,9 +653,13 @@ def _build_objective(objective, context="", homework_tokens=None):
     # always extracted (an illustration backs the conceptual unit when this
     # objective gets no richer code/worked unit); render precedence avoids dupes.
     query = analyze(objective)
+    # Domain anchoring: bias the keyword search toward the module's field so an
+    # ambiguous objective ("accumulator pattern") retrieves the right sense.
+    if domain == "programming" and "programming" not in query.search_terms:
+        query.search_terms = f"{query.search_terms} programming".strip()
     if context:
         query.search_terms = f"{query.search_terms} {context}".strip()
-    passages = fetch(query, select_sources(query))
+    passages = fetch(query, select_sources(query, domain))
     if not passages:
         return ObjectiveResult(objective, provenance="gap")
     ranked = rank(query, passages)
@@ -671,9 +675,9 @@ def _build_objective(objective, context="", homework_tokens=None):
     )
 
 
-def _safe_build(objective, context="", homework_tokens=None):
+def _safe_build(objective, context="", homework_tokens=None, domain=None):
     try:
-        return _build_objective(objective, context, homework_tokens)
+        return _build_objective(objective, context, homework_tokens, domain)
     except Exception:
         log.warning("objective failed: %s", objective, exc_info=True)
         return ObjectiveResult(objective)
@@ -1206,8 +1210,10 @@ def build_lecture_deck(
         extra_terms = list(dict.fromkeys(content_tokens(context_extra)))[:12]
         context = (context + " " + " ".join(extra_terms)).strip()
 
+    # The deck profile routes retrieval to the right sources for every objective.
+    domain = profile if profile in ("programming", "quantitative") else None
     with ThreadPoolExecutor(max_workers=min(len(objectives) + len(prereq_objectives), 8)) as executor:
-        builder = lambda o: _safe_build(o, context, homework_tokens)
+        builder = lambda o: _safe_build(o, context, homework_tokens, domain)
         results = list(executor.map(builder, objectives))
         prereq_results = list(executor.map(builder, prereq_objectives))
     for result in prereq_results:

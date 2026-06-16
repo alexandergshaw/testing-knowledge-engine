@@ -12,6 +12,7 @@ from .sources.duckduckgo import DuckDuckGoSource
 from .sources.stackexchange import StackExchangeSource
 from .sources.wikipedia import (
     SimpleWikipediaSource,
+    WikibooksSource,
     WikipediaSource,
     WikiversitySource,
     WiktionarySource,
@@ -27,16 +28,23 @@ _cache = TTLCache(ttl_seconds=3600)
 _wikipedia = WikipediaSource()
 _simple_wikipedia = SimpleWikipediaSource()
 _wikiversity = WikiversitySource()
+_wikibooks = WikibooksSource()
 _wiktionary = WiktionarySource()
 _stackoverflow = StackExchangeSource("stackoverflow", "Stack Overflow", 0.9)
 _cseducators = StackExchangeSource("cseducators", "CS Educators Stack Exchange", 0.85)
 _duckduckgo = DuckDuckGoSource()
 
 
-def select_sources(query):
+def select_sources(query, domain=None):
     """Rule-based domain routing. Generalists always run; specialists are
     added when the question looks like their domain. Misrouting is cheap —
-    BM25 ranking buries irrelevant results."""
+    BM25 ranking and the relevance gate bury irrelevant results.
+
+    `domain` is the deck-level profile ("programming"/"quantitative"): it
+    broadens the source set to that domain's experts even when an individual
+    objective's wording didn't trip the per-query flags (e.g. "accumulator
+    pattern" reads as neither programming nor education, but in a programming
+    deck it should still reach Stack Overflow)."""
     # Simple English Wikipedia rides with the generalists: when it has an
     # article its plain-language prose competes sentence-for-sentence with the
     # regular encyclopedia, which is what the layman lecture fallback wants.
@@ -51,6 +59,16 @@ def select_sources(query):
         sources.append(_stackoverflow)
     if query.qtype == "definition" and len(query.keywords) <= 2:
         sources.append(_wiktionary)
+
+    # Deck-profile routing (lecture flow only; default domain=None is unchanged).
+    if domain == "programming":
+        for source in (_stackoverflow, _cseducators):
+            if source not in sources:
+                sources.append(source)
+    elif domain == "quantitative":
+        for source in (_wikiversity, _wikibooks):
+            if source not in sources:
+                sources.append(source)
     return sources
 
 

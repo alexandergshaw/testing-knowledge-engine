@@ -62,3 +62,25 @@ def test_select_sources_includes_simple_wikipedia():
     assert pipeline._simple_wikipedia in sources
     # Still alongside the regular encyclopedia, not replacing it.
     assert pipeline._wikipedia in sources
+
+
+def test_select_sources_domain_routing():
+    query = analyze("Use the accumulator pattern to process data")
+    assert not query.is_programming
+    # Default routing (no domain) doesn't reach Stack Overflow for this wording.
+    base = pipeline.select_sources(query)
+    assert pipeline._stackoverflow not in base
+    # A programming deck routes every objective to the code experts.
+    routed = pipeline.select_sources(query, domain="programming")
+    assert pipeline._stackoverflow in routed and pipeline._cseducators in routed
+    # A quantitative deck reaches the lesson/worked-example sources.
+    quant = pipeline.select_sources(analyze("Solve the equation for x"), domain="quantitative")
+    assert pipeline._wikiversity in quant and pipeline._wikibooks in quant
+
+
+def test_select_sources_default_domain_unchanged():
+    # domain=None must be identical to before (so the retrieval benchmark holds).
+    query = analyze("Use the accumulator pattern to process data")
+    assert pipeline.select_sources(query) == [
+        pipeline._wikipedia, pipeline._simple_wikipedia, pipeline._duckduckgo
+    ]

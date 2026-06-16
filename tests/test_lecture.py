@@ -962,3 +962,19 @@ def test_lecture_default_still_returns_pptx_binary(client, monkeypatch):
     res = client.post("/api/v1/lecture", json={"objectives": "define variables and loops"})
     assert res.mimetype == PPTX_MIMETYPE
     assert res.data == b"PK\x03\x04xx"
+
+
+def test_programming_deck_routes_domain_to_sources(monkeypatch):
+    import knowledge.lecture as lecture
+
+    seen = []
+
+    def spy(objective, context="", homework_tokens=None, domain=None):
+        seen.append(domain)
+        return ObjectiveResult(
+            objective=objective, points=["A point."], confidence="high", provenance="curated"
+        )
+
+    monkeypatch.setattr(lecture, "_build_objective", spy)
+    lecture.build_lecture_deck("Write a for loop and define functions.", title="Python Programming")
+    assert "programming" in seen
