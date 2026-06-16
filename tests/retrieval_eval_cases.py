@@ -30,3 +30,28 @@ CASES = [
     {"objective": "Summarize the causes of the French Revolution",
      "keywords": ["french revolution", "revolution"]},
 ]
+
+# Gap corpus: programming idioms/tasks that general encyclopedias don't title an
+# article for, so they baseline as honest gaps. These demand *relevant* content
+# (a gap is not good enough) and start xfail; closing them — via Q&A
+# content-relevance (R-a), Rosetta Code/Wikibooks (R-b), aliases (R-c) — flips
+# them to pass. This is the gap-closure score the research loop drives up.
+GAP_CORPUS = [
+    # Still open — no Q&A/encyclopedic source has on-topic content for the bare
+    # idiom name; R-b (Rosetta Code) / R-c (aliases -> "running total") target it.
+    {"objective": "Use the accumulator pattern to process data", "domain": "programming",
+     "keywords": ["accumulator", "sum", "total", "reduce", "fold"],
+     "require_relevant": True, "xfail": True},
+    # Closed by R-a (Q&A content-relevance) — now strict regression guards.
+    {"objective": "Keep a running total in a loop", "domain": "programming",
+     "keywords": ["running total", "accumulator", "sum", "loop"], "require_relevant": True},
+    {"objective": "Swap two variables in place", "domain": "programming",
+     "keywords": ["swap"], "require_relevant": True},
+    {"objective": "Reverse a string", "domain": "programming",
+     "keywords": ["reverse", "string"], "require_relevant": True},
+    {"objective": "Read a file line by line", "domain": "programming",
+     "keywords": ["file", "read", "line"], "require_relevant": True},
+]
+
+ALL_CASES = CASES + GAP_CORPUS
+

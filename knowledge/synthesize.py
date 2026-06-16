@@ -18,6 +18,12 @@ FALLBACK_ANSWER = (
     "Try rephrasing the question or using more specific terms."
 )
 
+# Q&A / task sources whose *title* is a question or task name, not the concept —
+# their relevance is judged by (BM25-selected) content, not by the title gate.
+CONTENT_RELEVANCE_SOURCES = frozenset(
+    {"Stack Overflow", "CS Educators Stack Exchange", "Rosetta Code"}
+)
+
 # "Definition-shaped": a copular verb within the first ~8 tokens. Loose on its
 # own, but the opener picker pairs it with title-topic overlap, which is what
 # actually selects the right article.
@@ -133,9 +139,15 @@ def synthesize(query, ranked_sentences):
     # mentions "accumulator space" but is a different subject). Report an honest
     # gap rather than confident noise. Any shared substantive title token keeps
     # it — so a well-matched article is never dropped for differing phrasing.
+    #
+    # Q&A / task sources are exempt from the *title* check: a Stack Overflow
+    # question "How do I sum a list?" IS the accumulator pattern, so its content
+    # (BM25-selected against the query) is the relevance signal, not its title.
     topic_tokens = set(content_tokens(query.topic))
     if topic_tokens and not any(
-        topic_tokens & set(content_tokens(sentence.passage.title)) for sentence in selected
+        sentence.passage.source in CONTENT_RELEVANCE_SOURCES
+        or (topic_tokens & set(content_tokens(sentence.passage.title)))
+        for sentence in selected
     ):
         return {"answer": FALLBACK_ANSWER, "citations": [], "confidence": "none"}
 

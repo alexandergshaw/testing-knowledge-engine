@@ -88,8 +88,8 @@ def fetch(query, sources):
     return passages
 
 
-def _attempt(query):
-    passages = fetch(query, select_sources(query))
+def _attempt(query, domain=None):
+    passages = fetch(query, select_sources(query, domain))
     if not passages:
         return {"answer": FALLBACK_ANSWER, "citations": [], "confidence": "none"}
     return synthesize(query, rank(query, passages))
